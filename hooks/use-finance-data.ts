@@ -1,0 +1,91 @@
+'use client';
+
+import { useCallback, useEffect, useState } from 'react';
+import { demoAccounts, demoTransactions } from '@/lib/demo-data';
+import type { FinanceAccount, FinanceTransaction } from '@/lib/finance-data';
+import { createSupabaseBrowserClient } from '@/lib/supabase/browser';
+import { loadFinanceData } from '@/lib/supabase/finance';
+
+export function useFinanceData() {
+  const [client] = useState(createSupabaseBrowserClient);
+  const [accounts, setAccounts] = useState<FinanceAccount[]>(() =>
+    client ? [] : demoAccounts,
+  );
+  const [transactions, setTransactions] = useState<FinanceTransaction[]>(() =>
+    client ? [] : demoTransactions,
+  );
+  const [loading, setLoading] = useState(Boolean(client));
+  const [error, setError] = useState('');
+
+  const refresh = useCallback(async () => {
+    if (!client) {
+      setAccounts(demoAccounts);
+      setTransactions(demoTransactions);
+      setLoading(false);
+      setError('');
+      return;
+    }
+
+    setLoading(true);
+    setError('');
+    try {
+      const data = await loadFinanceData(client);
+      setAccounts(data.accounts);
+      setTransactions(data.transactions);
+    } catch {
+      setAccounts([]);
+      setTransactions([]);
+      setError(
+        'Не удалось загрузить данные. Проверьте соединение и попробуйте ещё раз.',
+      );
+    } finally {
+      setLoading(false);
+    }
+  }, [client]);
+
+  useEffect(() => {
+    if (!client) return;
+    let active = true;
+
+    void loadFinanceData(client)
+      .then((data) => {
+        if (!active) return;
+        setAccounts(data.accounts);
+        setTransactions(data.transactions);
+      })
+      .catch(() => {
+        if (!active) return;
+        setAccounts([]);
+        setTransactions([]);
+        setError(
+          'Не удалось загрузить данные. Проверьте соединение и попробуйте ещё раз.',
+        );
+      })
+      .finally(() => {
+        if (active) setLoading(false);
+      });
+
+    return () => {
+      active = false;
+    };
+  }, [client]);
+
+  const replaceTransaction = useCallback((updated: FinanceTransaction) => {
+    setTransactions((current) =>
+      current.map((transaction) =>
+        transaction.id === updated.id ? updated : transaction,
+      ),
+    );
+  }, []);
+
+  return {
+    accounts,
+    client,
+    dataMode: client ? ('supabase' as const) : ('demo' as const),
+    error,
+    loading,
+    refresh,
+    replaceTransaction,
+    transactions,
+  };
+}

@@ -11,6 +11,7 @@
 
 # testing
 /coverage
+tsconfig.tsbuildinfo
 
 # next.js
 /.next/
@@ -33,7 +34,6 @@ yarn-error.log*
 
 # deployment and generated files
 .vercel
-next-env.d.ts
 /dist/
 /.wrangler/
 /outputs/

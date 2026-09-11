@@ -1,6 +1,8 @@
 # Капитал
 
-Mobile-first PWA для контроля личных финансов по выпискам Т-Банка, Сбера, Яндекс Банка и Ozon Банка. В репозитории реализован только Этап 1: Dashboard, Transactions, Supabase/PostgreSQL foundation, PWA и синтетические seed-данные.
+Mobile-first PWA для контроля личных финансов по выпискам Т-Банка, Сбера, Яндекс Банка и Ozon Банка. Этап 1 включает Dashboard, Transactions, официальный Next.js App Router, Supabase/PostgreSQL foundation, авторизацию, безопасную PWA-оболочку и синтетические демоданные.
+
+Приложение не подключается к банкам, не запрашивает банковские логины, пароли или SMS-коды и не выполняет платежи. Выписки будут импортироваться пользователем вручную на этапе 2.
 
 ## Запуск
 
@@ -9,15 +11,29 @@ pnpm install
 pnpm dev
 ```
 
-Откройте `http://localhost:3000`. Без `.env.local` приложение работает в demo-режиме. Для Supabase скопируйте `.env.example` в `.env.local` и задайте public URL/anon key; service-role key во frontend не нужен и не должен храниться в репозитории.
+Откройте `http://localhost:3000`. Без `.env.local` приложение работает в явно обозначенном деморежиме.
 
-Примените `supabase/migrations/202609110001_initial_schema.sql`, затем `supabase/seed.sql` через Supabase CLI или SQL Editor. Seed содержит 120 синтетических операций и не содержит персональных банковских данных.
+## Подключение Supabase
+
+Для защищённого режима создайте собственный проект Supabase и выполните инструкцию [docs/supabase-setup.md](docs/supabase-setup.md). В репозитории хранится только безопасный шаблон `.env.example`; локальный `.env.local` исключён из Git.
+
+После подключения Supabase:
+
+- все экраны требуют входа;
+- пользователь видит только свои строки благодаря Row Level Security;
+- Dashboard читает счета и операции из PostgreSQL;
+- изменение категории и аналитических признаков операции сохраняется в базе;
+- выход завершает Supabase-сессию.
 
 ## Проверка
 
 ```bash
 pnpm lint
+pnpm typecheck
+pnpm test
 pnpm build
 ```
 
-Архитектурные решения, importer contract и риски описаны в `docs/architecture.md`.
+Production build создаётся в `out/` и публикуется как статическая PWA. Service worker кеширует только статические файлы и никогда не сохраняет навигационные страницы, API-ответы или ответы Supabase.
+
+Архитектурные решения, контракт будущих импортёров и риски описаны в [docs/architecture.md](docs/architecture.md).
