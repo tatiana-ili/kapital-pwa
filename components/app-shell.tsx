@@ -5,10 +5,10 @@ import { usePathname, useRouter } from 'next/navigation';
 import {
   BarChart3,
   CircleDollarSign,
+  FileUp,
   LayoutDashboard,
   List,
   LogOut,
-  MoreHorizontal,
   PiggyBank,
   Search,
 } from 'lucide-react';
@@ -23,9 +23,9 @@ import { cn } from '@/lib/utils';
 const nav = [
   { href: '/', label: 'Главная', icon: LayoutDashboard, enabled: true },
   { href: '/transactions', label: 'Операции', icon: List, enabled: true },
+  { href: '/import', label: 'Импорт', icon: FileUp, enabled: true },
   { href: '/analytics', label: 'Аналитика', icon: BarChart3, enabled: false },
   { href: '/budget', label: 'Бюджет', icon: PiggyBank, enabled: false },
-  { href: '/more', label: 'Ещё', icon: MoreHorizontal, enabled: false },
 ];
 
 export function AppShell({ children }: { children: React.ReactNode }) {

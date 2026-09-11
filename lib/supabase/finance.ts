@@ -7,7 +7,7 @@ import {
 } from '@/lib/finance-data';
 
 const transactionColumns =
-  'id,bank,account_id,transaction_date,amount,currency,merchant,description,category,transaction_type,is_transfer,is_recurring,note,excluded_from_analytics';
+  'id,bank,account_id,transaction_date,posted_date,amount,currency,merchant,description,category,transaction_type,is_transfer,is_recurring,source_hash,source_file,note,excluded_from_analytics';
 
 type AccountRow = {
   id: string;
@@ -22,6 +22,7 @@ type TransactionRow = {
   bank: BankCode;
   account_id: string;
   transaction_date: string;
+  posted_date: string | null;
   amount: number | string;
   currency: string;
   merchant: string;
@@ -30,6 +31,8 @@ type TransactionRow = {
   transaction_type: FinanceTransaction['transactionType'];
   is_transfer: boolean;
   is_recurring: boolean;
+  source_hash: string;
+  source_file: string;
   note: string | null;
   excluded_from_analytics: boolean;
 };
@@ -53,6 +56,7 @@ function mapTransaction(row: TransactionRow): FinanceTransaction {
   return {
     id: row.id,
     date: row.transaction_date,
+    postedDate: row.posted_date || undefined,
     merchant: row.merchant,
     description: row.description,
     category: row.category,
@@ -63,6 +67,8 @@ function mapTransaction(row: TransactionRow): FinanceTransaction {
     transactionType: row.transaction_type,
     isTransfer: row.is_transfer,
     isRecurring: row.is_recurring,
+    sourceHash: row.source_hash,
+    sourceFile: row.source_file,
     note: row.note || undefined,
     excludedFromAnalytics: row.excluded_from_analytics,
   };

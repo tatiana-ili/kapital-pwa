@@ -6,7 +6,7 @@ import {
   ArrowDownRight,
   ArrowUpRight,
   ChevronRight,
-  Plus,
+  FileUp,
   RefreshCw,
   TrendingUp,
   WalletCards,
@@ -149,14 +149,12 @@ export default function Home() {
                 >
                   Счета
                 </h2>
-                <Button
-                  variant="ghost"
-                  size="sm"
-                  className="min-h-11 px-3 text-primary"
-                  disabled
+                <Link
+                  href="/import"
+                  className="focus-ring inline-flex min-h-11 cursor-pointer items-center gap-2 rounded-xl px-3 text-sm font-semibold text-primary transition-colors hover:bg-primary/8"
                 >
-                  <Plus aria-hidden="true" /> Добавить
-                </Button>
+                  <FileUp className="size-4" aria-hidden="true" /> Импорт
+                </Link>
               </div>
               {accounts.length ? (
                 <div className="grid grid-cols-2 gap-3 xl:grid-cols-4">

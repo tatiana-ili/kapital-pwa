@@ -19,6 +19,7 @@ export type FinanceAccount = {
 export type FinanceTransaction = {
   id: string;
   date: string;
+  postedDate?: string;
   merchant: string;
   description: string;
   category: string;
@@ -29,6 +30,8 @@ export type FinanceTransaction = {
   transactionType: TransactionType;
   isTransfer: boolean;
   isRecurring: boolean;
+  sourceHash?: string;
+  sourceFile?: string;
   note?: string;
   excludedFromAnalytics: boolean;
 };

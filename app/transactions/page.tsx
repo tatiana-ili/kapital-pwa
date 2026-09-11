@@ -101,7 +101,7 @@ export default function TransactionsPage() {
     if (!client) {
       replaceTransaction(optimistic);
       setSelected(optimistic);
-      setSaveMessage('Изменение сохранено до закрытия демоверсии.');
+      setSaveMessage('Изменение сохранено в деморежиме на этом устройстве.');
       return;
     }
 

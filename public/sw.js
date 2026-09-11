@@ -1,10 +1,11 @@
-const CACHE = 'kapital-static-v2';
+const CACHE = 'kapital-static-v3';
 const STATIC_ASSETS = [
   '/manifest.webmanifest',
   '/favicon.svg',
   '/icon-192.png',
   '/icon-512.png',
   '/icon-maskable-512.png',
+  '/pdf.worker.min.mjs',
 ];
 
 self.addEventListener('install', (event) => {

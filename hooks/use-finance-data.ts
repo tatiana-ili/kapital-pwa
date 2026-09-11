@@ -3,6 +3,11 @@
 import { useCallback, useEffect, useState } from 'react';
 import { demoAccounts, demoTransactions } from '@/lib/demo-data';
 import type { FinanceAccount, FinanceTransaction } from '@/lib/finance-data';
+import {
+  loadLocalFinanceData,
+  LOCAL_IMPORT_EVENT,
+  updateLocalTransaction,
+} from '@/lib/local-finance-store';
 import { createSupabaseBrowserClient } from '@/lib/supabase/browser';
 import { loadFinanceData } from '@/lib/supabase/finance';
 
@@ -19,8 +24,9 @@ export function useFinanceData() {
 
   const refresh = useCallback(async () => {
     if (!client) {
-      setAccounts(demoAccounts);
-      setTransactions(demoTransactions);
+      const local = loadLocalFinanceData();
+      setAccounts([...demoAccounts, ...local.accounts]);
+      setTransactions([...local.transactions, ...demoTransactions]);
       setLoading(false);
       setError('');
       return;
@@ -44,7 +50,20 @@ export function useFinanceData() {
   }, [client]);
 
   useEffect(() => {
-    if (!client) return;
+    if (!client) {
+      const syncLocalData = () => {
+        const local = loadLocalFinanceData();
+        setAccounts([...demoAccounts, ...local.accounts]);
+        setTransactions([...local.transactions, ...demoTransactions]);
+      };
+      syncLocalData();
+      window.addEventListener(LOCAL_IMPORT_EVENT, syncLocalData);
+      window.addEventListener('storage', syncLocalData);
+      return () => {
+        window.removeEventListener(LOCAL_IMPORT_EVENT, syncLocalData);
+        window.removeEventListener('storage', syncLocalData);
+      };
+    }
     let active = true;
 
     void loadFinanceData(client)
@@ -70,13 +89,17 @@ export function useFinanceData() {
     };
   }, [client]);
 
-  const replaceTransaction = useCallback((updated: FinanceTransaction) => {
-    setTransactions((current) =>
-      current.map((transaction) =>
-        transaction.id === updated.id ? updated : transaction,
-      ),
-    );
-  }, []);
+  const replaceTransaction = useCallback(
+    (updated: FinanceTransaction) => {
+      setTransactions((current) =>
+        current.map((transaction) =>
+          transaction.id === updated.id ? updated : transaction,
+        ),
+      );
+      if (!client) updateLocalTransaction(updated);
+    },
+    [client],
+  );
 
   return {
     accounts,
