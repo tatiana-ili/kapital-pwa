@@ -1,0 +1,12 @@
+{
+  "name": "Капитал — личные финансы",
+  "short_name": "Капитал",
+  "description": "Счета, операции и аналитика личных финансов в одном месте.",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#f5f7fb",
+  "theme_color": "#2563eb",
+  "lang": "ru",
+  "orientation": "any",
+  "icons": [{ "src": "/favicon.svg", "sizes": "any", "type": "image/svg+xml", "purpose": "any maskable" }]
+}
