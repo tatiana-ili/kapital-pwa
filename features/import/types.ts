@@ -63,6 +63,7 @@ export type StatementPreview = {
   mapping: ColumnMapping;
   rows: ParsedImportRow[];
   endingBalance?: number;
+  pdfUnrecognizedLineCount?: number;
   counts: Record<ImportRowStatus, number>;
 };
 

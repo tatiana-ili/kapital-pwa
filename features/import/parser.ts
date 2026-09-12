@@ -233,6 +233,7 @@ export function parseStatementTable({
   const seenHashes = new Set<string>();
   const rows: ParsedImportRow[] = [];
   let endingBalance: number | undefined;
+  let pdfUnrecognizedLineCount = 0;
 
   source.table
     .slice(source.inspection.headerRowIndex + 1)
@@ -243,6 +244,15 @@ export function parseStatementTable({
       const date = parseDate(readMapped(rawRow, mapping.date));
       const postedDate = parseDate(readMapped(rawRow, mapping.postedDate));
       const amount = parseMappedAmount(rawRow, mapping);
+      if (
+        source.fileFormat === 'pdf' &&
+        !date &&
+        (amount === undefined || amount === 0) &&
+        !rawRow.some((cell) => parseDate(cell))
+      ) {
+        pdfUnrecognizedLineCount += 1;
+        return;
+      }
       const description = normalizeCell(
         readMapped(rawRow, mapping.description),
       );
@@ -336,7 +346,9 @@ export function parseStatementTable({
 
   if (!rows.length) {
     throw new StatementParseError(
-      'После строки заголовков не найдено ни одной операции.',
+      pdfUnrecognizedLineCount > 0
+        ? 'Не удалось выделить операции из текста PDF. Попробуйте выгрузить выписку как CSV или XLSX.'
+        : 'После строки заголовков не найдено ни одной операции.',
     );
   }
 
@@ -349,6 +361,7 @@ export function parseStatementTable({
     mapping,
     rows,
     endingBalance,
+    pdfUnrecognizedLineCount,
     counts: {
       new: rows.filter((row) => row.status === 'new').length,
       duplicate: rows.filter((row) => row.status === 'duplicate').length,

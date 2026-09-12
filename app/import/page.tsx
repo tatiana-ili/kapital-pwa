@@ -91,6 +91,7 @@ export default function ImportPage() {
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
   const [reloadSuggested, setReloadSuggested] = useState(false);
+  const [pdfReviewConfirmed, setPdfReviewConfirmed] = useState(false);
   const [result, setResult] = useState<StatementCommitResult | null>(null);
   const [visibleRows, setVisibleRows] = useState(30);
   const [ruleSuggestion, setRuleSuggestion] = useState<{
@@ -126,6 +127,9 @@ export default function ImportPage() {
         : 'Нет выбранных операций',
     };
   }, [rowsToSave]);
+  const pdfNeedsReview =
+    preview?.fileFormat === 'pdf' &&
+    (Boolean(preview.pdfUnrecognizedLineCount) || preview.counts.error > 0);
   const parsedBalance = balance.trim() ? parseAmount(balance) : undefined;
   const balanceIsInvalid = balance.trim() !== '' && parsedBalance === undefined;
   const progress = result ? 100 : preview ? 66 : 33;
@@ -167,6 +171,7 @@ export default function ImportPage() {
     nextMapping: ColumnMapping,
     nextAccountName: string,
   ) {
+    setPdfReviewConfirmed(false);
     try {
       const existingAccountId = accounts.find(
         (account) =>
@@ -204,6 +209,7 @@ export default function ImportPage() {
     setReading(true);
     setError('');
     setReloadSuggested(false);
+    setPdfReviewConfirmed(false);
     setResult(null);
     setPreview(null);
     setRuleSuggestion(null);
@@ -380,6 +386,7 @@ export default function ImportPage() {
     setResult(null);
     setError('');
     setReloadSuggested(false);
+    setPdfReviewConfirmed(false);
     setMapping({});
     setBalance('');
     setVisibleRows(30);
@@ -657,6 +664,27 @@ export default function ImportPage() {
 
             {preview && !result && (
               <>
+                {pdfNeedsReview && (
+                  <div
+                    aria-live="polite"
+                    className="rounded-2xl border border-amber-500/30 bg-amber-500/10 p-4 text-sm leading-relaxed text-amber-800 dark:text-amber-200"
+                  >
+                    <p className="font-semibold">PDF распознан частично</p>
+                    {Boolean(preview.pdfUnrecognizedLineCount) && (
+                      <p className="mt-1">
+                        Текстовых фрагментов без даты и суммы: {preview.pdfUnrecognizedLineCount}. Они могли быть служебным текстом или продолжением операции и не включены в импорт.
+                      </p>
+                    )}
+                    {preview.counts.error > 0 && (
+                      <p className="mt-1">
+                        Строк с неполными данными: {preview.counts.error}. Они отмечены как ошибки и не будут сохранены.
+                      </p>
+                    )}
+                    <p className="mt-1">
+                      Сверьте число операций и итоговые суммы с выпиской; при расхождении используйте CSV или XLSX.
+                    </p>
+                  </div>
+                )}
                 <PreviewList
                   preview={preview}
                   categories={categories}
@@ -784,6 +812,19 @@ export default function ImportPage() {
                 <p className="mt-1 text-sm text-muted-foreground">
                   операций для сохранения
                 </p>
+                {pdfNeedsReview && (
+                  <label className="mt-4 flex cursor-pointer items-start gap-3 rounded-xl border border-amber-500/30 p-3 text-sm leading-relaxed">
+                    <input
+                      type="checkbox"
+                      checked={pdfReviewConfirmed}
+                      onChange={(event) =>
+                        setPdfReviewConfirmed(event.target.checked)
+                      }
+                      className="mt-1 size-5 shrink-0 cursor-pointer accent-primary"
+                    />
+                    Я сверила количество операций и суммы с PDF-выпиской
+                  </label>
+                )}
                 <Button
                   className="mt-5 min-h-12 w-full cursor-pointer text-base"
                   disabled={
@@ -793,7 +834,8 @@ export default function ImportPage() {
                     !rowsToSave.length ||
                     !accountName.trim() ||
                     !bank ||
-                    balanceIsInvalid
+                    balanceIsInvalid ||
+                    (pdfNeedsReview && !pdfReviewConfirmed)
                   }
                   onClick={() => void saveImport()}
                 >

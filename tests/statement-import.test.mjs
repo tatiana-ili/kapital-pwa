@@ -41,6 +41,35 @@ test('PDF module load failure offers a reload without exposing a chunk URL', () 
   });
 });
 
+test('PDF text fragments are counted separately while incomplete operations remain visible', () => {
+  const table = [
+    ['Дата операции', 'Сумма операции', 'Магазин'],
+    ['04.09.2026', '-3,90', 'Оплата услуг'],
+    ['Продолжение описания', '', ''],
+    ['Дата операции', 'Сумма операции', 'Магазин'],
+    ['33', '', ''],
+    ['05.09.2026', '', 'Неполная операция'],
+  ];
+  const source = {
+    fileName: 'statement.pdf',
+    fileFormat: 'pdf',
+    fileHash: 'test-pdf',
+    table,
+    inspection: inspectStatementTable(table, 'statement.pdf'),
+  };
+
+  const preview = parseStatementTable({
+    bank: 'sber',
+    accountName: 'Тестовый счёт',
+    source,
+  });
+  assert.equal(preview.pdfUnrecognizedLineCount, 3);
+  assert.equal(preview.counts.new, 1);
+  assert.equal(preview.counts.error, 1);
+  assert.deepEqual(preview.rows.map((row) => row.rowNumber), [2, 6]);
+  assert.deepEqual(preview.rows.map((row) => row.selected), [true, false]);
+});
+
 test('CSV reader keeps quoted delimiters and detects statement columns', () => {
   const table = parseCsv(
     [
