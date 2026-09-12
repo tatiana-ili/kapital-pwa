@@ -1,4 +1,5 @@
 import { inspectStatementTable, stableHash } from './parser.ts';
+import { detectBankParser, inferBankMapping } from './banks/index.ts';
 import type {
   StatementCell,
   StatementFileFormat,
@@ -30,12 +31,27 @@ export async function readStatementFile(file: File): Promise<StatementSource> {
       'PDF распознаётся по текстовому слою. Если это скан, сохраните выписку как XLSX или CSV.';
   }
 
+  const inspection = inspectStatementTable(table, file.name);
+  const bankParser = detectBankParser(
+    file.name,
+    table,
+    inspection.headerRowIndex,
+  );
+  inspection.detectedBank = bankParser?.id;
+  if (bankParser) {
+    inspection.mapping = inferBankMapping(
+      bankParser.id,
+      inspection.headers,
+      inspection.mapping,
+    );
+  }
+
   return {
     fileName: file.name,
     fileFormat,
     fileHash,
     table,
-    inspection: inspectStatementTable(table, file.name),
+    inspection,
     warning,
   };
 }

@@ -2,6 +2,13 @@ import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 import test from 'node:test';
 import { parseCsv, readStatementFile } from '../features/import/file-reader.ts';
+import { bankStatementParsers } from '../features/import/banks/index.ts';
+import { parseStoredMapping } from '../features/import/profile-mapping.ts';
+import {
+  loadLocalImportProfile,
+  saveLocalStatement,
+} from '../lib/local-finance-store.ts';
+import { loadStatementImportProfile } from '../lib/supabase/imports.ts';
 import {
   inspectStatementTable,
   parseAmount,
@@ -100,4 +107,128 @@ test('Supabase import is atomic, authenticated and uses the existing RLS tables'
     migration,
     /grant execute on function public\.commit_statement_import/,
   );
+});
+
+test('bank parsers detect the source and normalize representative CSV layouts', async () => {
+  const cases = [
+    {
+      bank: 'tbank',
+      fileName: 'tbank.csv',
+      csv: 'Дата и время операции;Сумма операции;Название операции;Описание\n11.09.2026 12:00;-123,45;Тестовый магазин;Покупка',
+      amount: -123.45,
+    },
+    {
+      bank: 'sber',
+      fileName: 'sber.csv',
+      csv: 'Дата операции;Сумма операции;Сумма списания;Сумма зачисления;Получатель;Назначение платежа\n11.09.2026;123,45;123,45;;Тестовый магазин;Покупка',
+      amount: -123.45,
+    },
+    {
+      bank: 'yandex',
+      fileName: 'yandex-bank.csv',
+      csv: 'Дата и время;Списано;Зачислено;Название;Детали операции\n11.09.2026 12:00;;123,45;Тестовое начисление;Доход',
+      amount: 123.45,
+    },
+    {
+      bank: 'ozon',
+      fileName: 'ozon-bank.csv',
+      csv: 'Дата операции;Расход ₽;Приход ₽;Получатель;Назначение платежа\n11.09.2026;123,45;;Тестовый магазин;Покупка',
+      amount: -123.45,
+    },
+  ];
+
+  for (const item of cases) {
+    const file = new File([item.csv], item.fileName, { type: 'text/csv' });
+    const source = await readStatementFile(file);
+    assert.equal(source.inspection.detectedBank, item.bank);
+    const preview = bankStatementParsers[item.bank].parse({
+      bank: item.bank,
+      source,
+    });
+    assert.equal(preview.rows.length, 1);
+    assert.equal(preview.rows[0].amount, item.amount);
+    assert.equal(preview.rows[0].date, '2026-09-11');
+    assert.equal(preview.rows[0].status, 'new');
+  }
+});
+
+test('merchant in a generic statement does not masquerade as the issuing bank', async () => {
+  const file = new File(
+    ['Дата;Сумма;Магазин\n11.09.2026;-100;Ozon'],
+    'statement.csv',
+    { type: 'text/csv' },
+  );
+  const source = await readStatementFile(file);
+  assert.equal(source.inspection.detectedBank, undefined);
+});
+
+test('demo imports retain a validated column profile for the next statement', () => {
+  const previousWindow = globalThis.window;
+  const storage = new Map();
+  globalThis.window = {
+    localStorage: {
+      getItem: (key) => storage.get(key) ?? null,
+      setItem: (key, value) => storage.set(key, value),
+    },
+    dispatchEvent: () => {},
+  };
+  try {
+    const input = {
+      bank: 'sber',
+      accountName: 'Тестовый счёт',
+      sourceFile: 'sber.csv',
+      fileFormat: 'csv',
+      fileHash: 'test-file-hash',
+      headerSignature: 'test-header-signature',
+      columnMapping: { date: 0, expense: 2, merchant: 1 },
+      rows: [],
+    };
+    saveLocalStatement(input);
+    assert.deepEqual(
+      loadLocalImportProfile('sber', 'csv', 'test-header-signature', 3),
+      input.columnMapping,
+    );
+    assert.equal(
+      loadLocalImportProfile('tbank', 'csv', 'test-header-signature', 3),
+      undefined,
+    );
+    assert.equal(
+      parseStoredMapping({ date: 0, amount: 99 }, 3),
+      undefined,
+    );
+  } finally {
+    if (previousWindow === undefined) delete globalThis.window;
+    else globalThis.window = previousWindow;
+  }
+});
+
+test('Supabase profile lookup uses the bank, format and header signature', async () => {
+  const filters = [];
+  const query = {
+    select: () => query,
+    eq: (field, value) => {
+      filters.push([field, value]);
+      return query;
+    },
+    maybeSingle: async () => ({
+      data: { column_mapping: { date: 0, amount: 2 } },
+      error: null,
+    }),
+  };
+  const client = {
+    from: (table) => {
+      assert.equal(table, 'import_profiles');
+      return query;
+    },
+  };
+
+  assert.deepEqual(
+    await loadStatementImportProfile(client, 'ozon', 'xlsx', 'headers-1', 3),
+    { date: 0, amount: 2 },
+  );
+  assert.deepEqual(filters, [
+    ['bank', 'ozon'],
+    ['file_format', 'xlsx'],
+    ['header_signature', 'headers-1'],
+  ]);
 });

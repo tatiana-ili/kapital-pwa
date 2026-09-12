@@ -1,13 +1,16 @@
 import type {
   StatementCommitInput,
   StatementCommitResult,
-} from '@/features/import/commit-types';
-import { stableHash } from '@/features/import/parser';
+} from '../features/import/commit-types.ts';
+import { stableHash } from '../features/import/parser.ts';
+import { parseStoredMapping } from '../features/import/profile-mapping.ts';
+import type { ColumnMapping, StatementFileFormat } from '../features/import/types.ts';
 import {
   bankNames,
+  type BankCode,
   type FinanceAccount,
   type FinanceTransaction,
-} from './finance-data';
+} from './finance-data.ts';
 
 const STORAGE_KEY = 'kapital.demo.imports.v1';
 export const LOCAL_IMPORT_EVENT = 'kapital:demo-imported';
@@ -19,14 +22,22 @@ type StoredImport = {
   insertedCount: number;
 };
 
+type StoredImportProfile = {
+  bank: BankCode;
+  fileFormat: StatementFileFormat;
+  headerSignature: string;
+  columnMapping: ColumnMapping;
+};
+
 type LocalFinanceState = {
   accounts: FinanceAccount[];
   transactions: FinanceTransaction[];
   imports: StoredImport[];
+  profiles: StoredImportProfile[];
 };
 
 function createEmptyState(): LocalFinanceState {
-  return { accounts: [], transactions: [], imports: [] };
+  return { accounts: [], transactions: [], imports: [], profiles: [] };
 }
 
 export function loadLocalFinanceData(): LocalFinanceState {
@@ -42,10 +53,26 @@ export function loadLocalFinanceData(): LocalFinanceState {
         ? parsed.transactions
         : [],
       imports: Array.isArray(parsed.imports) ? parsed.imports : [],
+      profiles: Array.isArray(parsed.profiles) ? parsed.profiles : [],
     };
   } catch {
     return createEmptyState();
   }
+}
+
+export function loadLocalImportProfile(
+  bank: BankCode,
+  fileFormat: StatementFileFormat,
+  headerSignature: string,
+  columnCount: number,
+) {
+  const profile = loadLocalFinanceData().profiles.find(
+    (item) =>
+      item.bank === bank &&
+      item.fileFormat === fileFormat &&
+      item.headerSignature === headerSignature,
+  );
+  return parseStoredMapping(profile?.columnMapping, columnCount);
 }
 
 export function updateLocalTransaction(updated: FinanceTransaction) {
@@ -124,6 +151,20 @@ export function saveLocalStatement(
     importedAt: new Date().toISOString(),
     insertedCount: transactions.length,
   });
+  const profile: StoredImportProfile = {
+    bank: input.bank,
+    fileFormat: input.fileFormat,
+    headerSignature: input.headerSignature,
+    columnMapping: input.columnMapping,
+  };
+  const existingProfileIndex = state.profiles.findIndex(
+    (item) =>
+      item.bank === profile.bank &&
+      item.fileFormat === profile.fileFormat &&
+      item.headerSignature === profile.headerSignature,
+  );
+  if (existingProfileIndex >= 0) state.profiles[existingProfileIndex] = profile;
+  else state.profiles.push(profile);
   window.localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
   window.dispatchEvent(new Event(LOCAL_IMPORT_EVENT));
 

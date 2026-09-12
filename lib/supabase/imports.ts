@@ -3,6 +3,9 @@ import type {
   StatementCommitInput,
   StatementCommitResult,
 } from '@/features/import/commit-types';
+import { parseStoredMapping } from '../../features/import/profile-mapping.ts';
+import type { StatementFileFormat } from '@/features/import/types';
+import type { BankCode } from '@/lib/finance-data';
 
 type RpcResult = {
   already_imported?: boolean;
@@ -10,6 +13,24 @@ type RpcResult = {
   duplicate_count?: number;
   review_count?: number;
 };
+
+export async function loadStatementImportProfile(
+  client: SupabaseClient,
+  bank: BankCode,
+  fileFormat: StatementFileFormat,
+  headerSignature: string,
+  columnCount: number,
+) {
+  const { data, error } = await client
+    .from('import_profiles')
+    .select('column_mapping')
+    .eq('bank', bank)
+    .eq('file_format', fileFormat)
+    .eq('header_signature', headerSignature)
+    .maybeSingle();
+  if (error) throw error;
+  return parseStoredMapping(data?.column_mapping, columnCount);
+}
 
 export async function commitStatementImport(
   client: SupabaseClient,

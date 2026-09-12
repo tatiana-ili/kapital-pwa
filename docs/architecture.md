@@ -25,7 +25,9 @@ hooks/
   use-finance-data.ts         единый источник данных для Dashboard и Transactions
 features/import/
   file-reader.ts              локальное чтение CSV/XLSX/PDF
-  parser.ts                   detector, mapping, normalизация, dedup
+  banks/                      детекторы и маппинг колонок четырёх банков
+  parser.ts                   общая нормализация и dedup
+  profile-mapping.ts          проверка сохранённого маппинга
   types.ts                    контракт preview и нормализованных строк
 supabase/
   migrations/                 версионируемая PostgreSQL-схема и RLS
@@ -54,7 +56,7 @@ docs/
 
 ```text
 file → detector → bank parser → normalized rows → validation
-     → fingerprint/dedup → transfer matcher → preview → atomic commit
+     → fingerprint/dedup → transfer review → preview → atomic commit
 ```
 
 Единый контракт парсера:
@@ -62,15 +64,17 @@ file → detector → bank parser → normalized rows → validation
 ```ts
 interface BankStatementParser {
   id: 'tbank' | 'sber' | 'yandex' | 'ozon';
-  detect(input: WorkbookLike): DetectionScore;
-  inspect(input: WorkbookLike): SourceColumns;
-  parse(input: WorkbookLike, mapping?: ColumnMapping): ParseResult;
+  matches(fileName: string, preamble: string): boolean;
+  inferMapping(headers: string[]): ColumnMapping;
+  parse(options: ParseStatementOptions): StatementPreview;
 }
 ```
 
 Импортёр не пишет в БД во время чтения файла. Он возвращает одинаковые нормализованные строки и диагностические сообщения с номером строки. Если автоматическое сопоставление не подходит, пользователь получает preview колонок и mapping UI; mapping сохраняется в `import_profiles` по банку, формату и сигнатуре заголовков.
 
-Fingerprint строится из нормализованных `bank + account + transaction_date + amount + merchant + description`. Сначала выполняется точный dedup по `source_hash`, затем эвристическая зона «требует проверки». Внутренние переводы сопоставляются отдельным matcher по модулю суммы, окну даты, разным своим счетам и ключевым словам. Матч никогда не удаляет строку: обе операции получают общий `transfer_group_id` и исключаются из расхода/дохода.
+Банковские модули определяют источник по имени файла или заголовку перед таблицей и добавляют варианты названий колонок. Нормализация строк остаётся общей. При следующем импорте сопоставление загружается из `import_profiles` либо локального демохранилища и проверяется на допустимые индексы; неизвестный формат можно сопоставить вручную. Автоматическое распознавание проверено на обезличенных примерах CSV. Для подтверждения реальных версий выписок нужны отдельные fixture-файлы без персональных данных.
+
+Сейчас fingerprint версии 1 строится из `bank + transaction_date + amount + merchant + description`; повторный файл и совпадающий `source_hash` не добавляют операции. Учёт счёта в fingerprint требует миграции с сохранением совместимости уже загруженных данных. Текст, похожий на перевод, помечается для проверки; пользователь может вручную исключить строку из аналитики. Автоматическое связывание двух сторон перевода через `transfer_group_id` остаётся отдельной задачей.
 
 PDF считается best-effort источником. Табличный PDF извлекается через PDF.js в браузере. Скан без текстового слоя отклоняется с рекомендацией использовать CSV или XLSX; OCR не выполняется.
 

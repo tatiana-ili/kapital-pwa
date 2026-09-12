@@ -342,14 +342,14 @@ function readMapped(row: StatementCell[], index?: number) {
 }
 
 function parseMappedAmount(row: StatementCell[], mapping: ColumnMapping) {
-  if (mapping.amount !== undefined) {
-    return parseAmount(row[mapping.amount]);
-  }
   const expense = parseAmount(readMapped(row, mapping.expense));
   const income = parseAmount(readMapped(row, mapping.income));
+  if (income !== undefined && income !== 0 && expense !== undefined && expense !== 0) {
+    return undefined;
+  }
   if (income !== undefined && income !== 0) return Math.abs(income);
   if (expense !== undefined && expense !== 0) return -Math.abs(expense);
-  return undefined;
+  return parseAmount(readMapped(row, mapping.amount));
 }
 
 export function parseAmount(value: StatementCell) {

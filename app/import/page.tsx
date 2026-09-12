@@ -23,8 +23,9 @@ import { Input } from '@/components/ui/input';
 import { Progress } from '@/components/ui/progress';
 import { Spinner } from '@/components/ui/spinner';
 import type { StatementCommitResult } from '@/features/import/commit-types';
+import { bankStatementParsers, inferBankMapping } from '@/features/import/banks';
 import { readStatementFile } from '@/features/import/file-reader';
-import { parseAmount, parseStatementTable } from '@/features/import/parser';
+import { inspectStatementTable, parseAmount } from '@/features/import/parser';
 import type {
   ColumnMapping,
   ImportColumnKey,
@@ -39,8 +40,14 @@ import {
   formatTransactionDate,
   type BankCode,
 } from '@/lib/finance-data';
-import { saveLocalStatement } from '@/lib/local-finance-store';
-import { commitStatementImport } from '@/lib/supabase/imports';
+import {
+  loadLocalImportProfile,
+  saveLocalStatement,
+} from '@/lib/local-finance-store';
+import {
+  commitStatementImport,
+  loadStatementImportProfile,
+} from '@/lib/supabase/imports';
 
 const bankOptions = Object.entries(bankNames) as Array<[BankCode, string]>;
 const categoryOptions = [
@@ -115,13 +122,44 @@ export default function ImportPage() {
   const balanceIsInvalid = balance.trim() !== '' && parsedBalance === undefined;
   const progress = result ? 100 : preview ? 66 : 33;
 
+  async function resolveMapping(nextSource: StatementSource, nextBank: BankCode) {
+    const generic = inspectStatementTable(
+      nextSource.table,
+      nextSource.fileName,
+    ).mapping;
+    const inferred = inferBankMapping(
+      nextBank,
+      nextSource.inspection.headers,
+      generic,
+    );
+    try {
+      const stored = client
+        ? await loadStatementImportProfile(
+            client,
+            nextBank,
+            nextSource.fileFormat,
+            nextSource.inspection.headerSignature,
+            nextSource.inspection.headers.length,
+          )
+        : loadLocalImportProfile(
+            nextBank,
+            nextSource.fileFormat,
+            nextSource.inspection.headerSignature,
+            nextSource.inspection.headers.length,
+          );
+      return stored ?? inferred;
+    } catch {
+      return inferred;
+    }
+  }
+
   function rebuildPreview(
     nextSource: StatementSource,
     nextBank: BankCode,
     nextMapping: ColumnMapping,
   ) {
     try {
-      const parsed = parseStatementTable({
+      const parsed = bankStatementParsers[nextBank].parse({
         bank: nextBank,
         source: nextSource,
         mapping: nextMapping,
@@ -151,16 +189,20 @@ export default function ImportPage() {
     setVisibleRows(30);
     try {
       const nextSource = await readStatementFile(file);
-      const nextBank = nextSource.inspection.detectedBank || bank;
-      const nextMapping = nextSource.inspection.mapping;
+      const nextBank = nextSource.inspection.detectedBank;
       setSource(nextSource);
-      setMapping(nextMapping);
       if (!nextBank) {
+        setBank('');
+        setMapping(nextSource.inspection.mapping);
         setError('Не удалось определить банк. Выберите его вручную.');
         return;
       }
+      const nextMapping = await resolveMapping(nextSource, nextBank);
+      setMapping(nextMapping);
       setBank(nextBank);
-      if (!accountName) setAccountName(`${bankNames[nextBank]} · Основной`);
+      if (!accountName || accountName.includes('· Основной')) {
+        setAccountName(`${bankNames[nextBank]} · Основной`);
+      }
       rebuildPreview(nextSource, nextBank, nextMapping);
     } catch (cause) {
       setSource(null);
@@ -173,12 +215,18 @@ export default function ImportPage() {
     }
   }
 
-  function changeBank(nextBank: BankCode | '') {
+  async function changeBank(nextBank: BankCode | '') {
     setBank(nextBank);
+    setPreview(null);
     if (nextBank && (!accountName || accountName.includes('· Основной'))) {
       setAccountName(`${bankNames[nextBank]} · Основной`);
     }
-    if (source && nextBank) rebuildPreview(source, nextBank, mapping);
+    if (!source || !nextBank) return;
+    setReading(true);
+    const nextMapping = await resolveMapping(source, nextBank);
+    setMapping(nextMapping);
+    rebuildPreview(source, nextBank, nextMapping);
+    setReading(false);
   }
 
   function changeMapping(key: ImportColumnKey, value: string) {
@@ -286,7 +334,7 @@ export default function ImportPage() {
               variant="outline"
               className="min-h-12 cursor-pointer px-4"
               onClick={resetImport}
-              disabled={saving}
+              disabled={saving || reading}
             >
               <RotateCcw aria-hidden="true" /> Другой файл
             </Button>
@@ -396,8 +444,9 @@ export default function ImportPage() {
                     <select
                       id="import-bank"
                       value={bank}
+                      disabled={reading}
                       onChange={(event) =>
-                        changeBank(event.target.value as BankCode | '')
+                        void changeBank(event.target.value as BankCode | '')
                       }
                       className="focus-ring min-h-12 w-full cursor-pointer rounded-xl border bg-background px-3 text-base"
                     >
