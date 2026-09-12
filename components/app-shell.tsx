@@ -23,7 +23,7 @@ import { cn } from '@/lib/utils';
 const nav = [
   { href: '/', label: 'Главная', icon: LayoutDashboard, enabled: true },
   { href: '/transactions', label: 'Операции', icon: List, enabled: true },
-  { href: '/analytics', label: 'Аналитика', icon: BarChart3, enabled: false },
+  { href: '/analytics', label: 'Аналитика', icon: BarChart3, enabled: true },
   { href: '/budget', label: 'Бюджет', icon: PiggyBank, enabled: false },
   { href: '/more', label: 'Ещё', icon: Menu, enabled: true },
 ];

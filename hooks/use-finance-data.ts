@@ -11,7 +11,8 @@ import {
 import { createSupabaseBrowserClient } from '@/lib/supabase/browser';
 import { loadFinanceData } from '@/lib/supabase/finance';
 
-export function useFinanceData() {
+export function useFinanceData(options: { allTransactions?: boolean } = {}) {
+  const allTransactions = options.allTransactions ?? false;
   const [client] = useState(createSupabaseBrowserClient);
   const [accounts, setAccounts] = useState<FinanceAccount[]>(() =>
     client ? [] : demoAccounts,
@@ -43,7 +44,7 @@ export function useFinanceData() {
     setLoading(true);
     setError('');
     try {
-      const data = await loadFinanceData(client);
+      const data = await loadFinanceData(client, { allTransactions });
       setAccounts(data.accounts);
       setTransactions(data.transactions);
     } catch {
@@ -55,7 +56,7 @@ export function useFinanceData() {
     } finally {
       setLoading(false);
     }
-  }, [client]);
+  }, [client, allTransactions]);
 
   useEffect(() => {
     if (!client) {
@@ -82,7 +83,7 @@ export function useFinanceData() {
     }
     let active = true;
 
-    void loadFinanceData(client)
+    void loadFinanceData(client, { allTransactions })
       .then((data) => {
         if (!active) return;
         setAccounts(data.accounts);
@@ -103,7 +104,7 @@ export function useFinanceData() {
     return () => {
       active = false;
     };
-  }, [client]);
+  }, [client, allTransactions]);
 
   const replaceTransaction = useCallback(
     (updated: FinanceTransaction) => {

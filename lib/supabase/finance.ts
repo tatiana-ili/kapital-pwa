@@ -4,7 +4,7 @@ import {
   type BankCode,
   type FinanceAccount,
   type FinanceTransaction,
-} from '@/lib/finance-data';
+} from '../finance-data.ts';
 
 const transactionColumns =
   'id,bank,account_id,transaction_date,posted_date,amount,currency,merchant,description,category,transaction_type,is_transfer,transfer_group_id,is_recurring,source_hash,source_file,note,excluded_from_analytics';
@@ -76,28 +76,58 @@ function mapTransaction(row: TransactionRow): FinanceTransaction {
   };
 }
 
-export async function loadFinanceData(client: SupabaseClient) {
+async function loadAllTransactions(client: SupabaseClient) {
+  const rows: TransactionRow[] = [];
+  const pageSize = 500;
+  for (let offset = 0; ; offset += pageSize) {
+    const result = await client
+      .from('transactions')
+      .select(transactionColumns)
+      .order('transaction_date', { ascending: false })
+      .order('id', { ascending: false })
+      .range(offset, offset + pageSize - 1);
+    if (result.error) throw result.error;
+    const page = (result.data ?? []) as TransactionRow[];
+    rows.push(...page);
+    if (page.length < pageSize) break;
+  }
+  return rows;
+}
+
+export async function loadFinanceData(
+  client: SupabaseClient,
+  options: { allTransactions?: boolean } = {},
+) {
   const [accountsResult, transactionsResult] = await Promise.all([
     client
       .from('accounts')
       .select('id,bank,name,currency,current_balance')
       .eq('is_active', true)
       .order('created_at', { ascending: true }),
-    client
-      .from('transactions')
-      .select(transactionColumns)
-      .order('transaction_date', { ascending: false })
-      .limit(500),
+    options.allTransactions
+      ? loadAllTransactions(client)
+      : client
+          .from('transactions')
+          .select(transactionColumns)
+          .order('transaction_date', { ascending: false })
+          .limit(500),
   ]);
 
   if (accountsResult.error) throw accountsResult.error;
-  if (transactionsResult.error) throw transactionsResult.error;
+  if (
+    !options.allTransactions &&
+    'error' in transactionsResult &&
+    transactionsResult.error
+  )
+    throw transactionsResult.error;
+
+  const transactionRows = options.allTransactions
+    ? (transactionsResult as TransactionRow[])
+    : ((transactionsResult as { data: TransactionRow[] | null }).data ?? []);
 
   return {
     accounts: ((accountsResult.data ?? []) as AccountRow[]).map(mapAccount),
-    transactions: ((transactionsResult.data ?? []) as TransactionRow[]).map(
-      mapTransaction,
-    ),
+    transactions: transactionRows.map(mapTransaction),
   };
 }
 

@@ -242,14 +242,13 @@ export default function Home() {
                       Без переводов и исключённых операций
                     </p>
                   </div>
-                  <Button
-                    variant="ghost"
-                    size="icon-lg"
+                  <Link
+                    href="/analytics"
                     aria-label="Открыть аналитику"
-                    disabled
+                    className="focus-ring grid size-9 cursor-pointer place-items-center rounded-lg text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
                   >
                     <ChevronRight aria-hidden="true" />
-                  </Button>
+                  </Link>
                 </div>
                 {summary.categories.length ? (
                   <div className="mt-6 flex flex-col items-center gap-7 sm:flex-row sm:justify-around">
