@@ -27,6 +27,7 @@ import { Spinner } from '@/components/ui/spinner';
 import type { StatementCommitResult } from '@/features/import/commit-types';
 import { bankStatementParsers, inferBankMapping } from '@/features/import/banks';
 import { readStatementFile } from '@/features/import/file-reader';
+import { describeStatementReadError } from '@/features/import/read-error';
 import { inspectStatementTable, parseAmount } from '@/features/import/parser';
 import type {
   ColumnMapping,
@@ -89,6 +90,7 @@ export default function ImportPage() {
   const [reading, setReading] = useState(false);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
+  const [reloadSuggested, setReloadSuggested] = useState(false);
   const [result, setResult] = useState<StatementCommitResult | null>(null);
   const [visibleRows, setVisibleRows] = useState(30);
   const [ruleSuggestion, setRuleSuggestion] = useState<{
@@ -201,6 +203,7 @@ export default function ImportPage() {
     if (!file || reading || categoriesLoading || categoriesError) return;
     setReading(true);
     setError('');
+    setReloadSuggested(false);
     setResult(null);
     setPreview(null);
     setRuleSuggestion(null);
@@ -227,9 +230,9 @@ export default function ImportPage() {
       rebuildPreview(nextSource, nextBank, nextMapping, nextAccountName);
     } catch (cause) {
       setSource(null);
-      setError(
-        cause instanceof Error ? cause.message : 'Не удалось прочитать файл.',
-      );
+      const readError = describeStatementReadError(cause, file.name);
+      setError(readError.message);
+      setReloadSuggested(readError.reloadSuggested);
     } finally {
       setReading(false);
       if (inputRef.current) inputRef.current.value = '';
@@ -376,6 +379,7 @@ export default function ImportPage() {
     setRuleMessage('');
     setResult(null);
     setError('');
+    setReloadSuggested(false);
     setMapping({});
     setBalance('');
     setVisibleRows(30);
@@ -636,6 +640,17 @@ export default function ImportPage() {
                   <p className="mt-1 text-sm leading-relaxed text-muted-foreground">
                     {error}
                   </p>
+                  {reloadSuggested && (
+                    <Button
+                      type="button"
+                      variant="outline"
+                      className="mt-3 min-h-11 cursor-pointer"
+                      onClick={() => window.location.reload()}
+                    >
+                      <RotateCcw aria-hidden="true" />
+                      Обновить приложение
+                    </Button>
+                  )}
                 </div>
               </div>
             )}

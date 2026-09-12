@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 import test from 'node:test';
 import { parseCsv, readStatementFile } from '../features/import/file-reader.ts';
+import { describeStatementReadError } from '../features/import/read-error.ts';
 import { bankStatementParsers } from '../features/import/banks/index.ts';
 import { parseStoredMapping } from '../features/import/profile-mapping.ts';
 import {
@@ -18,6 +19,27 @@ import {
   parseDate,
   parseStatementTable,
 } from '../features/import/parser.ts';
+
+test('PDF module load failure offers a reload without exposing a chunk URL', () => {
+  const cause = new Error(
+    'Failed to load chunk /_next/static/chunks/299vvn65nf9yr.js from module 43169',
+  );
+  cause.name = 'ChunkLoadError';
+
+  const result = describeStatementReadError(cause, 'statement.pdf');
+  assert.equal(result.reloadSuggested, true);
+  assert.match(result.message, /модуль чтения PDF/);
+  assert.doesNotMatch(result.message, /_next|43169/);
+
+  const invalidFile = describeStatementReadError(
+    new Error('Файл больше 20 МБ.'),
+    'statement.pdf',
+  );
+  assert.deepEqual(invalidFile, {
+    message: 'Файл больше 20 МБ.',
+    reloadSuggested: false,
+  });
+});
 
 test('CSV reader keeps quoted delimiters and detects statement columns', () => {
   const table = parseCsv(
