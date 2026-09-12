@@ -17,8 +17,10 @@ import {
   Upload,
 } from 'lucide-react';
 import { AppShell } from '@/components/app-shell';
+import { categoriesForAmount } from '@/features/categories/defaults';
+import type { FinanceCategory } from '@/features/categories/types';
 import { Badge } from '@/components/ui/badge';
-import { Button } from '@/components/ui/button';
+import { Button, buttonVariants } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Progress } from '@/components/ui/progress';
 import { Spinner } from '@/components/ui/spinner';
@@ -34,6 +36,7 @@ import type {
   StatementSource,
 } from '@/features/import/types';
 import { useFinanceData } from '@/hooks/use-finance-data';
+import { useCategories } from '@/hooks/use-categories';
 import {
   bankNames,
   formatRubles,
@@ -50,35 +53,6 @@ import {
 } from '@/lib/supabase/imports';
 
 const bankOptions = Object.entries(bankNames) as Array<[BankCode, string]>;
-const categoryOptions = [
-  'Продукты',
-  'Кафе и рестораны',
-  'Доставка еды',
-  'Транспорт',
-  'Такси',
-  'Автомобиль',
-  'Жильё',
-  'Коммунальные услуги',
-  'Связь и интернет',
-  'Подписки',
-  'Маркетплейсы',
-  'Одежда',
-  'Красота',
-  'Здоровье',
-  'Развлечения',
-  'Путешествия',
-  'Образование',
-  'Подарки',
-  'Налоги',
-  'Финансовые услуги',
-  'Наличные',
-  'Зарплата',
-  'Дополнительный доход',
-  'Возврат',
-  'Проценты',
-  'Кэшбэк',
-  'Прочее',
-];
 const mappingFields: Array<{
   key: ImportColumnKey;
   label: string;
@@ -96,7 +70,15 @@ const mappingFields: Array<{
 ];
 
 export default function ImportPage() {
-  const { client, dataMode, transactions } = useFinanceData();
+  const { accounts, client, dataMode, transactions } = useFinanceData();
+  const {
+    categories,
+    rules: categoryRules,
+    loading: categoriesLoading,
+    error: categoriesError,
+    refresh: refreshCategories,
+    createRule,
+  } = useCategories();
   const inputRef = useRef<HTMLInputElement>(null);
   const [source, setSource] = useState<StatementSource | null>(null);
   const [bank, setBank] = useState<BankCode | ''>('');
@@ -109,6 +91,13 @@ export default function ImportPage() {
   const [error, setError] = useState('');
   const [result, setResult] = useState<StatementCommitResult | null>(null);
   const [visibleRows, setVisibleRows] = useState(30);
+  const [ruleSuggestion, setRuleSuggestion] = useState<{
+    merchant: string;
+    category: string;
+    direction: 'expense' | 'income';
+  } | null>(null);
+  const [savingRule, setSavingRule] = useState(false);
+  const [ruleMessage, setRuleMessage] = useState('');
 
   const rowsToSave = useMemo(
     () =>
@@ -118,6 +107,23 @@ export default function ImportPage() {
       ) ?? [],
     [preview],
   );
+  const previewSummary = useMemo(() => {
+    const dates = rowsToSave.map((row) => row.date).sort();
+    return {
+      income: rowsToSave.reduce(
+        (sum, row) => sum + (row.isTransfer ? 0 : Math.max(0, row.amount)),
+        0,
+      ),
+      expenses: rowsToSave.reduce(
+        (sum, row) => sum + (row.isTransfer ? 0 : Math.min(0, row.amount)),
+        0,
+      ),
+      transferCount: rowsToSave.filter((row) => row.isTransfer).length,
+      period: dates.length
+        ? `${formatFullDate(dates[0])}${dates[0] === dates[dates.length - 1] ? '' : ` — ${formatFullDate(dates[dates.length - 1])}`}`
+        : 'Нет выбранных операций',
+    };
+  }, [rowsToSave]);
   const parsedBalance = balance.trim() ? parseAmount(balance) : undefined;
   const balanceIsInvalid = balance.trim() !== '' && parsedBalance === undefined;
   const progress = result ? 100 : preview ? 66 : 33;
@@ -157,13 +163,24 @@ export default function ImportPage() {
     nextSource: StatementSource,
     nextBank: BankCode,
     nextMapping: ColumnMapping,
+    nextAccountName: string,
   ) {
     try {
+      const existingAccountId = accounts.find(
+        (account) =>
+          account.bank === bankNames[nextBank] &&
+          account.name.toLocaleLowerCase('ru') ===
+            nextAccountName.trim().toLocaleLowerCase('ru'),
+      )?.id;
       const parsed = bankStatementParsers[nextBank].parse({
         bank: nextBank,
+        accountName: nextAccountName,
+        existingAccountId,
         source: nextSource,
         mapping: nextMapping,
         existingTransactions: transactions,
+        categories,
+        categoryRules,
       });
       setPreview(parsed);
       setError('');
@@ -181,11 +198,13 @@ export default function ImportPage() {
   }
 
   async function handleFile(file?: File) {
-    if (!file || reading) return;
+    if (!file || reading || categoriesLoading || categoriesError) return;
     setReading(true);
     setError('');
     setResult(null);
     setPreview(null);
+    setRuleSuggestion(null);
+    setRuleMessage('');
     setVisibleRows(30);
     try {
       const nextSource = await readStatementFile(file);
@@ -200,10 +219,12 @@ export default function ImportPage() {
       const nextMapping = await resolveMapping(nextSource, nextBank);
       setMapping(nextMapping);
       setBank(nextBank);
-      if (!accountName || accountName.includes('· Основной')) {
-        setAccountName(`${bankNames[nextBank]} · Основной`);
-      }
-      rebuildPreview(nextSource, nextBank, nextMapping);
+      const nextAccountName =
+        !accountName || accountName.includes('· Основной')
+          ? `${bankNames[nextBank]} · Основной`
+          : accountName;
+      setAccountName(nextAccountName);
+      rebuildPreview(nextSource, nextBank, nextMapping, nextAccountName);
     } catch (cause) {
       setSource(null);
       setError(
@@ -218,14 +239,16 @@ export default function ImportPage() {
   async function changeBank(nextBank: BankCode | '') {
     setBank(nextBank);
     setPreview(null);
-    if (nextBank && (!accountName || accountName.includes('· Основной'))) {
-      setAccountName(`${bankNames[nextBank]} · Основной`);
-    }
+    const nextAccountName =
+      nextBank && (!accountName || accountName.includes('· Основной'))
+        ? `${bankNames[nextBank]} · Основной`
+        : accountName;
+    setAccountName(nextAccountName);
     if (!source || !nextBank) return;
     setReading(true);
     const nextMapping = await resolveMapping(source, nextBank);
     setMapping(nextMapping);
-    rebuildPreview(source, nextBank, nextMapping);
+    rebuildPreview(source, nextBank, nextMapping, nextAccountName);
     setReading(false);
   }
 
@@ -234,10 +257,29 @@ export default function ImportPage() {
     if (value === '') delete nextMapping[key];
     else nextMapping[key] = Number(value);
     setMapping(nextMapping);
-    if (source && bank) rebuildPreview(source, bank, nextMapping);
+    if (source && bank) rebuildPreview(source, bank, nextMapping, accountName);
   }
 
   function updateRow(id: string, changes: Partial<ParsedImportRow>) {
+    if (changes.category !== undefined) {
+      const row = preview?.rows.find((item) => item.id === id);
+      const merchant = row?.merchant.trim() ?? '';
+      const direction = row && row.amount >= 0 ? 'income' : 'expense';
+      const alreadyCovered = categoryRules.some(
+        (rule) =>
+          rule.isActive &&
+          rule.field === 'merchant' &&
+          (rule.direction === 'both' || rule.direction === direction) &&
+          rule.value.toLocaleLowerCase('ru') === merchant.toLocaleLowerCase('ru') &&
+          rule.targetCategory === changes.category,
+      );
+      setRuleSuggestion(
+        row && changes.category !== row.category && merchant && !alreadyCovered
+          ? { merchant, category: changes.category, direction }
+          : null,
+      );
+      setRuleMessage('');
+    }
     setPreview((current) =>
       current
         ? {
@@ -250,15 +292,36 @@ export default function ImportPage() {
     );
   }
 
+  async function saveSuggestedRule() {
+    if (!ruleSuggestion || savingRule) return;
+    setSavingRule(true);
+    try {
+      const saved = await createRule(
+        'merchant',
+        ruleSuggestion.merchant,
+        ruleSuggestion.category,
+        ruleSuggestion.direction,
+      );
+      if (saved) {
+        setRuleSuggestion(null);
+        setRuleMessage('Правило сохранено для следующих импортов.');
+      }
+    } finally {
+      setSavingRule(false);
+    }
+  }
+
   function selectImportable(selected: boolean) {
     setPreview((current) =>
       current
         ? {
             ...current,
             rows: current.rows.map((row) =>
-              row.status === 'new' || row.status === 'review'
+              row.status === 'new'
                 ? { ...row, selected }
-                : row,
+                : row.status === 'review'
+                  ? { ...row, selected: false }
+                  : row,
             ),
           }
         : current,
@@ -272,7 +335,13 @@ export default function ImportPage() {
     try {
       const input = {
         bank,
-        accountName: accountName.trim(),
+        accountName:
+          accounts.find(
+            (account) =>
+              account.bank === bankNames[bank] &&
+              account.name.toLocaleLowerCase('ru') ===
+                accountName.trim().toLocaleLowerCase('ru'),
+          )?.name ?? accountName.trim(),
         currentBalance: parsedBalance,
         sourceFile: preview.sourceFile,
         fileFormat: preview.fileFormat,
@@ -303,6 +372,8 @@ export default function ImportPage() {
   function resetImport() {
     setSource(null);
     setPreview(null);
+    setRuleSuggestion(null);
+    setRuleMessage('');
     setResult(null);
     setError('');
     setMapping({});
@@ -365,6 +436,7 @@ export default function ImportPage() {
           <Progress
             value={progress}
             aria-label={`Выполнено ${progress}%`}
+            getAriaValueText={() => `${progress}%`}
             className="mt-4 gap-0"
           />
         </div>
@@ -404,12 +476,20 @@ export default function ImportPage() {
                     type="file"
                     accept=".csv,.xlsx,.pdf,text/csv,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,application/pdf"
                     className="sr-only"
-                    disabled={reading || saving}
+                    disabled={reading || saving || categoriesLoading || Boolean(categoriesError)}
                     onChange={(event: ChangeEvent<HTMLInputElement>) =>
                       void handleFile(event.target.files?.[0])
                     }
                   />
                 </label>
+                {categoriesError && (
+                  <div className="mt-3 flex flex-wrap items-center gap-3 rounded-xl border border-destructive/30 bg-destructive/10 p-3 text-sm text-destructive" role="alert">
+                    <span>{categoriesError} Импорт временно недоступен.</span>
+                    <Button type="button" variant="outline" onClick={() => void refreshCategories()} className="min-h-11 cursor-pointer">
+                      Повторить
+                    </Button>
+                  </div>
+                )}
                 <a
                   href="/examples/kapital-demo-statement.csv"
                   download
@@ -466,7 +546,13 @@ export default function ImportPage() {
                     <Input
                       id="import-account-name"
                       value={accountName}
-                      onChange={(event) => setAccountName(event.target.value)}
+                      onChange={(event) => {
+                        const nextAccountName = event.target.value;
+                        setAccountName(nextAccountName);
+                        if (source && bank) {
+                          rebuildPreview(source, bank, mapping, nextAccountName);
+                        }
+                      }}
                       className="h-12 rounded-xl text-base md:text-base"
                       placeholder="Например, Основная карта"
                     />
@@ -555,14 +641,40 @@ export default function ImportPage() {
             )}
 
             {preview && !result && (
-              <PreviewList
-                preview={preview}
-                rowsToSave={rowsToSave.length}
-                visibleRows={visibleRows}
-                onShowMore={() => setVisibleRows((current) => current + 30)}
-                onUpdateRow={updateRow}
-                onSelectAll={selectImportable}
-              />
+              <>
+                <PreviewList
+                  preview={preview}
+                  categories={categories}
+                  rowsToSave={rowsToSave.length}
+                  visibleRows={visibleRows}
+                  onShowMore={() => setVisibleRows((current) => current + 30)}
+                  onUpdateRow={updateRow}
+                  onSelectAll={selectImportable}
+                />
+                {ruleSuggestion && (
+                  <div className="rounded-2xl border border-primary/20 bg-primary/[.06] p-4">
+                    <p className="text-sm font-medium">
+                      Всегда относить операции «{ruleSuggestion.merchant}» к категории «{ruleSuggestion.category}»?
+                    </p>
+                    <p className="mt-1 text-xs text-muted-foreground">
+                      Текущая строка уже изменена. Правило применится к следующим импортам.
+                    </p>
+                    <div className="mt-3 flex flex-wrap gap-2">
+                      <Button type="button" disabled={savingRule} onClick={() => void saveSuggestedRule()} className="min-h-11 cursor-pointer">
+                        Создать правило
+                      </Button>
+                      <Button type="button" variant="ghost" onClick={() => setRuleSuggestion(null)} className="min-h-11 cursor-pointer">
+                        Не сейчас
+                      </Button>
+                    </div>
+                  </div>
+                )}
+                {ruleMessage && (
+                  <output className="block rounded-2xl bg-emerald-500/10 p-4 text-sm text-emerald-700 dark:text-emerald-300">
+                    {ruleMessage}
+                  </output>
+                )}
+              </>
             )}
 
             {result && (
@@ -612,6 +724,35 @@ export default function ImportPage() {
                   проверки.
                 </p>
               )}
+              {preview && (
+                <div className="mt-5 border-t pt-5">
+                  <p className="text-sm font-semibold">Итоги выбранных операций</p>
+                  <dl className="mt-3 space-y-3 text-sm">
+                    <div className="flex items-start justify-between gap-3">
+                      <dt className="text-muted-foreground">Банк</dt>
+                      <dd className="text-right font-medium">{bank ? bankNames[bank] : 'Не выбран'}</dd>
+                    </div>
+                    <div className="flex items-start justify-between gap-3">
+                      <dt className="text-muted-foreground">Период</dt>
+                      <dd className="text-right font-medium">{previewSummary.period}</dd>
+                    </div>
+                    <div className="flex items-start justify-between gap-3">
+                      <dt className="text-muted-foreground">Доходы</dt>
+                      <dd className="font-semibold text-emerald-700 dark:text-emerald-300">{formatRubles(previewSummary.income)}</dd>
+                    </div>
+                    <div className="flex items-start justify-between gap-3">
+                      <dt className="text-muted-foreground">Расходы</dt>
+                      <dd className="font-semibold">{formatRubles(previewSummary.expenses)}</dd>
+                    </div>
+                    {previewSummary.transferCount > 0 && (
+                      <div className="flex items-start justify-between gap-3">
+                        <dt className="text-muted-foreground">Свои переводы</dt>
+                        <dd className="font-medium">{previewSummary.transferCount} · вне итогов</dd>
+                      </div>
+                    )}
+                  </dl>
+                </div>
+              )}
               {source?.warning && (
                 <p className="mt-4 rounded-xl bg-amber-500/10 p-3 text-sm leading-relaxed text-amber-800 dark:text-amber-200">
                   {source.warning}
@@ -632,6 +773,8 @@ export default function ImportPage() {
                   className="mt-5 min-h-12 w-full cursor-pointer text-base"
                   disabled={
                     saving ||
+                    categoriesLoading ||
+                    Boolean(categoriesError) ||
                     !rowsToSave.length ||
                     !accountName.trim() ||
                     !bank ||
@@ -700,6 +843,11 @@ function Step({
   );
 }
 
+function formatFullDate(date: string) {
+  const [year, month, day] = date.split('-');
+  return `${day}.${month}.${year}`;
+}
+
 function Metric({
   label,
   value,
@@ -729,6 +877,7 @@ function Metric({
 
 function PreviewList({
   preview,
+  categories,
   rowsToSave,
   visibleRows,
   onShowMore,
@@ -736,6 +885,7 @@ function PreviewList({
   onSelectAll,
 }: {
   preview: StatementPreview;
+  categories: FinanceCategory[];
   rowsToSave: number;
   visibleRows: number;
   onShowMore: () => void;
@@ -770,7 +920,12 @@ function PreviewList({
       </div>
       <div className="divide-y divide-border">
         {preview.rows.slice(0, visibleRows).map((row) => (
-          <ImportRowCard key={row.id} row={row} onUpdate={onUpdateRow} />
+          <ImportRowCard
+            key={row.id}
+            row={row}
+            categories={categories}
+            onUpdate={onUpdateRow}
+          />
         ))}
       </div>
       {visibleRows < preview.rows.length && (
@@ -790,9 +945,11 @@ function PreviewList({
 
 function ImportRowCard({
   row,
+  categories,
   onUpdate,
 }: {
   row: ParsedImportRow;
+  categories: FinanceCategory[];
   onUpdate: (id: string, changes: Partial<ParsedImportRow>) => void;
 }) {
   const blocked = row.status === 'duplicate' || row.status === 'error';
@@ -864,9 +1021,13 @@ function ImportRowCard({
                 >
                   {[
                     row.category,
-                    ...categoryOptions.filter((item) => item !== row.category),
+                    ...categoriesForAmount(categories, row.amount)
+                      .map((item) => item.name)
+                      .filter((name) => name !== row.category),
                   ].map((category) => (
-                    <option key={category}>{category}</option>
+                    <option key={category} value={category}>
+                      {category}
+                    </option>
                   ))}
                 </select>
               </label>
@@ -934,8 +1095,8 @@ function SuccessPanel({
       </h3>
       <p className="mx-auto mt-2 max-w-md text-sm leading-relaxed text-muted-foreground sm:text-base">
         {result.alreadyImported
-          ? 'Повторное добавление остановлено, поэтому дубли не появились.'
-          : `Добавлено ${result.insertedCount} операций${result.duplicateCount ? `, пропущено дублей: ${result.duplicateCount}` : ''}.`}
+          ? 'Все выбранные операции уже сохранены; дубли не добавлены.'
+          : `Новых операций: ${result.insertedCount}${result.duplicateCount ? `, пропущено дублей: ${result.duplicateCount}` : ''}.`}
       </p>
       {dataMode === 'demo' && (
         <p className="mx-auto mt-4 max-w-md rounded-2xl bg-primary/[.07] p-4 text-sm leading-relaxed">
@@ -944,12 +1105,12 @@ function SuccessPanel({
         </p>
       )}
       <div className="mt-6 flex flex-col justify-center gap-3 sm:flex-row">
-        <Button
-          className="min-h-12 cursor-pointer px-5"
-          render={<Link href="/transactions" />}
+        <Link
+          href="/transactions"
+          className={buttonVariants({ className: 'min-h-12 cursor-pointer px-5' })}
         >
           Посмотреть операции
-        </Button>
+        </Link>
         <Button
           variant="outline"
           className="min-h-12 cursor-pointer px-5"

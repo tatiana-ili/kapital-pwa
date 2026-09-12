@@ -1,5 +1,6 @@
 'use client';
 
+import Link from 'next/link';
 import { useMemo, useState } from 'react';
 import {
   AlertCircle,
@@ -13,6 +14,7 @@ import {
   SlidersHorizontal,
 } from 'lucide-react';
 import { AppShell } from '@/components/app-shell';
+import { categoriesForAmount } from '@/features/categories/defaults';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -26,6 +28,7 @@ import {
 } from '@/components/ui/sheet';
 import { Spinner } from '@/components/ui/spinner';
 import { useFinanceData } from '@/hooks/use-finance-data';
+import { useCategories } from '@/hooks/use-categories';
 import {
   formatRubles,
   formatTransactionDate,
@@ -40,16 +43,6 @@ const bankFilters = [
   'Яндекс Банк',
   'Ozon Банк',
 ] as const;
-const categories = [
-  'Продукты',
-  'Кафе и рестораны',
-  'Такси',
-  'Маркетплейсы',
-  'Подписки',
-  'Переводы',
-  'Прочее',
-];
-
 export default function TransactionsPage() {
   const {
     client,
@@ -60,12 +53,24 @@ export default function TransactionsPage() {
     replaceTransaction,
     transactions,
   } = useFinanceData();
+  const {
+    categories,
+    rules,
+    createRule,
+    error: categoriesError,
+  } = useCategories();
   const [query, setQuery] = useState('');
   const [bank, setBank] = useState<(typeof bankFilters)[number]>('Все банки');
   const [selected, setSelected] = useState<FinanceTransaction | null>(null);
   const [saving, setSaving] = useState(false);
+  const [savingRule, setSavingRule] = useState(false);
   const [saveMessage, setSaveMessage] = useState('');
   const [saveError, setSaveError] = useState('');
+  const [ruleSuggestion, setRuleSuggestion] = useState<{
+    merchant: string;
+    category: string;
+    direction: 'expense' | 'income';
+  } | null>(null);
 
   const filtered = useMemo(() => {
     const normalized = query.trim().toLocaleLowerCase('ru');
@@ -102,7 +107,7 @@ export default function TransactionsPage() {
       replaceTransaction(optimistic);
       setSelected(optimistic);
       setSaveMessage('Изменение сохранено в деморежиме на этом устройстве.');
-      return;
+      return true;
     }
 
     setSaving(true);
@@ -115,12 +120,56 @@ export default function TransactionsPage() {
       replaceTransaction(persisted);
       setSelected(persisted);
       setSaveMessage('Изменение сохранено в Supabase.');
+      return true;
     } catch {
       setSaveError(
         'Не удалось сохранить изменение. Проверьте соединение и повторите попытку.',
       );
+      return false;
     } finally {
       setSaving(false);
+    }
+  }
+
+  async function changeSelectedCategory(nextCategory: string) {
+    if (!selected) return;
+    if (nextCategory === selected.category) return;
+    const merchant = selected.merchant;
+    const direction = selected.amount >= 0 ? 'income' : 'expense';
+    const saved = await updateSelected({ category: nextCategory });
+    const alreadyCovered = rules.some(
+      (rule) =>
+        rule.isActive &&
+        rule.field === 'merchant' &&
+        (rule.direction === 'both' || rule.direction === direction) &&
+        rule.value.toLocaleLowerCase('ru') === merchant.toLocaleLowerCase('ru') &&
+        rule.targetCategory === nextCategory,
+    );
+    if (saved) {
+      setRuleSuggestion(
+        merchant.trim() && !alreadyCovered
+          ? { merchant, category: nextCategory, direction }
+          : null,
+      );
+    }
+  }
+
+  async function saveSuggestedRule() {
+    if (!ruleSuggestion || savingRule) return;
+    setSavingRule(true);
+    try {
+      const created = await createRule(
+        'merchant',
+        ruleSuggestion.merchant,
+        ruleSuggestion.category,
+        ruleSuggestion.direction,
+      );
+      if (created) {
+        setRuleSuggestion(null);
+        setSaveMessage('Правило сохранено для будущих импортов.');
+      }
+    } finally {
+      setSavingRule(false);
     }
   }
 
@@ -144,6 +193,12 @@ export default function TransactionsPage() {
                 ? 'демо-операций'
                 : 'операций в защищённой базе'}
             </p>
+            <Link
+              href="/categories"
+              className="focus-ring mt-2 inline-flex min-h-11 items-center rounded-xl px-3 text-sm font-medium text-primary hover:bg-primary/10"
+            >
+              Категории и правила
+            </Link>
           </div>
           <div className="surface-card rounded-2xl border px-4 py-3 sm:text-right">
             <p className="text-xs text-muted-foreground">Итого по выборке</p>
@@ -242,6 +297,7 @@ export default function TransactionsPage() {
                     setSelected(transaction);
                     setSaveError('');
                     setSaveMessage('');
+                    setRuleSuggestion(null);
                   }}
                 />
               ))}
@@ -264,7 +320,10 @@ export default function TransactionsPage() {
       <Sheet
         open={Boolean(selected)}
         onOpenChange={(open) => {
-          if (!open && !saving) setSelected(null);
+          if (!open && !saving) {
+            setSelected(null);
+            setRuleSuggestion(null);
+          }
         }}
       >
         <SheetContent
@@ -293,20 +352,53 @@ export default function TransactionsPage() {
                     value={selected.category}
                     disabled={saving}
                     onChange={(event) =>
-                      void updateSelected({ category: event.target.value })
+                      void changeSelectedCategory(event.target.value)
                     }
                     className="focus-ring min-h-11 w-full cursor-pointer rounded-xl border bg-background px-3 text-base disabled:cursor-wait disabled:opacity-60"
                   >
                     {[
                       selected.category,
-                      ...categories.filter(
-                        (category) => category !== selected.category,
-                      ),
+                      ...categoriesForAmount(categories, selected.amount)
+                        .map((item) => item.name)
+                        .filter((name) => name !== selected.category),
                     ].map((category) => (
-                      <option key={category}>{category}</option>
+                      <option key={category} value={category}>
+                        {category}
+                      </option>
                     ))}
                   </select>
                 </Detail>
+                {ruleSuggestion && (
+                  <div className="rounded-2xl border border-primary/20 bg-primary/[.06] p-4">
+                    <p className="text-sm font-medium">
+                      Всегда относить операции «{ruleSuggestion.merchant}» к категории «{ruleSuggestion.category}»?
+                    </p>
+                    <p className="mt-1 text-xs leading-relaxed text-muted-foreground">
+                      Правило применится к следующим импортам. Эту операцию вы уже изменили.
+                    </p>
+                    <div className="mt-3 flex flex-wrap gap-2">
+                      <Button
+                        className="min-h-11 cursor-pointer"
+                        disabled={savingRule}
+                        onClick={() => void saveSuggestedRule()}
+                      >
+                        Создать правило
+                      </Button>
+                      <Button
+                        variant="ghost"
+                        className="min-h-11 cursor-pointer"
+                        onClick={() => setRuleSuggestion(null)}
+                      >
+                        Не сейчас
+                      </Button>
+                    </div>
+                    {categoriesError && (
+                      <p className="mt-2 text-sm text-destructive" role="alert">
+                        {categoriesError}
+                      </p>
+                    )}
+                  </div>
+                )}
                 <Detail label="Описание">
                   <p>{selected.description}</p>
                 </Detail>
@@ -390,7 +482,7 @@ export default function TransactionsPage() {
                 )}
                 <p className="rounded-xl bg-muted px-3 py-3 text-xs leading-relaxed text-muted-foreground">
                   {dataMode === 'demo'
-                    ? 'В деморежиме изменения хранятся только до закрытия приложения.'
+                    ? 'В деморежиме изменения сохраняются в этом браузере.'
                     : 'Изменения сохраняются в вашей защищённой базе Supabase.'}
                 </p>
               </div>

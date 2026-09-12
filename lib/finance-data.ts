@@ -29,6 +29,7 @@ export type FinanceTransaction = {
   currency: 'RUB';
   transactionType: TransactionType;
   isTransfer: boolean;
+  transferGroupId?: string;
   isRecurring: boolean;
   sourceHash?: string;
   sourceFile?: string;
@@ -123,7 +124,7 @@ export function calculateFinanceSummary(
 
 export function formatRubles(amount: number) {
   const sign = amount > 0 ? '+' : amount < 0 ? '−' : '';
-  return `${sign}${new Intl.NumberFormat('ru-RU', { maximumFractionDigits: 0 }).format(Math.abs(amount))} ₽`;
+  return `${sign}${new Intl.NumberFormat('ru-RU', { maximumFractionDigits: 2 }).format(Math.abs(amount))} ₽`;
 }
 
 export function formatTransactionDate(date: string) {

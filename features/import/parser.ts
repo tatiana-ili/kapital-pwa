@@ -1,8 +1,6 @@
 import {
   bankNames,
   type BankCode,
-  type BankName,
-  type FinanceTransaction,
   type TransactionType,
 } from '../../lib/finance-data.ts';
 import type {
@@ -15,6 +13,9 @@ import type {
   StatementPreview,
   StatementTable,
 } from './types.ts';
+import { findTransferCounterpart, looksLikeTransfer } from './transfers.ts';
+import { defaultCategories } from '../categories/defaults.ts';
+import { applyCategoryRules } from '../categories/rules.ts';
 
 const columnAliases: Record<ImportColumnKey, RegExp[]> = {
   date: [
@@ -65,13 +66,6 @@ const bankMatchers: Array<[BankCode, RegExp[]]> = [
   ['ozon', [/ozon/i, /озон/i]],
 ];
 
-const bankCodesByName: Record<BankName, BankCode> = {
-  'Т-Банк': 'tbank',
-  Сбер: 'sber',
-  'Яндекс Банк': 'yandex',
-  'Ozon Банк': 'ozon',
-};
-
 const categoryRules: Array<[string, RegExp]> = [
   [
     'Продукты',
@@ -95,8 +89,6 @@ const categoryRules: Array<[string, RegExp]> = [
   ['Наличные', /банкомат|снятие налич/i],
 ];
 
-const transferPattern =
-  /перевод|transfer|сбп|между счетами|на карту|с карты|пополнение счета/i;
 const refundPattern = /возврат|refund|отмена операции|reversal/i;
 
 export class StatementParseError extends Error {
@@ -205,18 +197,39 @@ export function inspectStatementTable(
 
 export function parseStatementTable({
   bank,
+  accountName,
+  existingAccountId,
   source,
   mapping = source.inspection.mapping,
   existingTransactions = [],
+  categories = defaultCategories,
+  categoryRules: userCategoryRules = [],
 }: ParseStatementOptions): StatementPreview {
   validateMapping(mapping);
 
   const existingHashes = new Set(
-    existingTransactions.map(
-      (transaction) =>
-        transaction.sourceHash || fingerprintExisting(transaction),
-    ),
+    existingTransactions.flatMap((transaction) => {
+      if (transaction.sourceHash?.startsWith('v2-')) {
+        return [transaction.sourceHash];
+      }
+      return [];
+    }),
   );
+  if (existingAccountId) {
+    for (const transaction of existingTransactions) {
+      if (transaction.accountId !== existingAccountId) continue;
+      existingHashes.add(
+        createTransactionFingerprint({
+          bank,
+          accountName,
+          date: transaction.date,
+          amount: transaction.amount,
+          merchant: transaction.merchant,
+          description: transaction.description,
+        }),
+      );
+    }
+  }
   const seenHashes = new Set<string>();
   const rows: ParsedImportRow[] = [];
   let endingBalance: number | undefined;
@@ -254,11 +267,32 @@ export function parseStatementTable({
       const safeDate = date || '';
       const safeAmount = amount ?? 0;
       const combinedText = `${merchant} ${description}`;
-      const suggestedTransfer = transferPattern.test(combinedText);
+      const transferCounterpart = findTransferCounterpart(
+        {
+          accountId:
+            existingAccountId ||
+            (accountName.trim()
+              ? `new-${bank}-${accountName.trim()}`
+              : undefined),
+          date: safeDate,
+          amount: safeAmount,
+          merchant,
+          description,
+        },
+        existingTransactions,
+      );
+      const suggestedTransfer =
+        looksLikeTransfer(combinedText) || Boolean(transferCounterpart);
       const transactionType = inferTransactionType(safeAmount, combinedText);
-      const category = inferCategory(safeAmount, combinedText, transactionType);
+      const category = applyCategoryRules(
+        { merchant, description, amount: safeAmount },
+        inferCategory(safeAmount, combinedText, transactionType),
+        categories,
+        userCategoryRules,
+      );
       const sourceHash = createTransactionFingerprint({
         bank,
+        accountName,
         date: safeDate,
         amount: safeAmount,
         merchant,
@@ -272,7 +306,11 @@ export function parseStatementTable({
       else if (duplicate) status = 'duplicate';
       else if (suggestedTransfer) {
         status = 'review';
-        issues.push('Похоже на перевод — проверьте перед сохранением');
+        issues.push(
+          transferCounterpart
+            ? `Найдена возможная пара: ${transferCounterpart.bank}, ${transferCounterpart.date}, ${transferCounterpart.merchant}. Отметьте перевод, чтобы связать операции.`
+            : 'Похоже на перевод — проверьте перед сохранением',
+        );
       }
 
       seenHashes.add(sourceHash);
@@ -292,7 +330,7 @@ export function parseStatementTable({
         sourceHash,
         status,
         issues,
-        selected: status === 'new' || status === 'review',
+        selected: status === 'new',
       });
     });
 
@@ -444,6 +482,7 @@ function inferCategory(amount: number, text: string, type: TransactionType) {
 
 export function createTransactionFingerprint(input: {
   bank: BankCode;
+  accountName: string;
   date: string;
   amount: number;
   merchant: string;
@@ -451,22 +490,13 @@ export function createTransactionFingerprint(input: {
 }) {
   const normalized = [
     input.bank,
+    input.accountName.replace(/\s+/g, ' ').trim().toLocaleLowerCase('ru'),
     input.date,
     input.amount.toFixed(2),
     normalizeFingerprintText(input.merchant),
     normalizeFingerprintText(input.description),
   ].join('|');
-  return `v1-${stableHash(normalized)}`;
-}
-
-function fingerprintExisting(transaction: FinanceTransaction) {
-  return createTransactionFingerprint({
-    bank: bankCodesByName[transaction.bank],
-    date: transaction.date,
-    amount: transaction.amount,
-    merchant: transaction.merchant,
-    description: transaction.description,
-  });
+  return `v2-${stableHash(normalized)}`;
 }
 
 function normalizeFingerprintText(value: string) {

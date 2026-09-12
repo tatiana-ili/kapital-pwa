@@ -3,6 +3,10 @@ import type {
   FinanceTransaction,
   TransactionType,
 } from '@/lib/finance-data';
+import type {
+  CategoryRule,
+  FinanceCategory,
+} from '../categories/types.ts';
 
 export type StatementFileFormat = 'csv' | 'xlsx' | 'pdf';
 export type StatementCell = string | number | boolean | Date | null | undefined;
@@ -73,7 +77,11 @@ export type StatementSource = {
 
 export type ParseStatementOptions = {
   bank: BankCode;
+  accountName: string;
+  existingAccountId?: string;
   source: StatementSource;
   mapping?: ColumnMapping;
   existingTransactions?: FinanceTransaction[];
+  categories?: FinanceCategory[];
+  categoryRules?: CategoryRule[];
 };

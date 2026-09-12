@@ -7,7 +7,7 @@ import {
 } from '@/lib/finance-data';
 
 const transactionColumns =
-  'id,bank,account_id,transaction_date,posted_date,amount,currency,merchant,description,category,transaction_type,is_transfer,is_recurring,source_hash,source_file,note,excluded_from_analytics';
+  'id,bank,account_id,transaction_date,posted_date,amount,currency,merchant,description,category,transaction_type,is_transfer,transfer_group_id,is_recurring,source_hash,source_file,note,excluded_from_analytics';
 
 type AccountRow = {
   id: string;
@@ -30,6 +30,7 @@ type TransactionRow = {
   category: string;
   transaction_type: FinanceTransaction['transactionType'];
   is_transfer: boolean;
+  transfer_group_id: string | null;
   is_recurring: boolean;
   source_hash: string;
   source_file: string;
@@ -66,6 +67,7 @@ function mapTransaction(row: TransactionRow): FinanceTransaction {
     currency: (row.currency || 'RUB') as 'RUB',
     transactionType: row.transaction_type,
     isTransfer: row.is_transfer,
+    transferGroupId: row.transfer_group_id || undefined,
     isRecurring: row.is_recurring,
     sourceHash: row.source_hash,
     sourceFile: row.source_file,

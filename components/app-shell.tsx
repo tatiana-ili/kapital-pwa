@@ -5,10 +5,10 @@ import { usePathname, useRouter } from 'next/navigation';
 import {
   BarChart3,
   CircleDollarSign,
-  FileUp,
   LayoutDashboard,
   List,
   LogOut,
+  Menu,
   PiggyBank,
   Search,
 } from 'lucide-react';
@@ -23,10 +23,20 @@ import { cn } from '@/lib/utils';
 const nav = [
   { href: '/', label: 'Главная', icon: LayoutDashboard, enabled: true },
   { href: '/transactions', label: 'Операции', icon: List, enabled: true },
-  { href: '/import', label: 'Импорт', icon: FileUp, enabled: true },
   { href: '/analytics', label: 'Аналитика', icon: BarChart3, enabled: false },
   { href: '/budget', label: 'Бюджет', icon: PiggyBank, enabled: false },
+  { href: '/more', label: 'Ещё', icon: Menu, enabled: true },
 ];
+
+function isNavActive(pathname: string, href: string) {
+  if (href === '/') return pathname === '/';
+  if (href === '/more') {
+    return ['/more', '/import', '/categories'].some((path) =>
+      pathname.startsWith(path),
+    );
+  }
+  return pathname.startsWith(href);
+}
 
 export function AppShell({ children }: { children: React.ReactNode }) {
   const pathname = usePathname();
@@ -69,8 +79,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
         </Link>
         <nav className="mt-9 space-y-1" aria-label="Основная навигация">
           {nav.map(({ href, label, icon: Icon, enabled }) => {
-            const active =
-              href === '/' ? pathname === '/' : pathname.startsWith(href);
+            const active = isNavActive(pathname, href);
             if (!enabled)
               return (
                 <span
@@ -170,8 +179,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
       >
         <div className="mx-auto grid max-w-lg grid-cols-5">
           {nav.map(({ href, label, icon: Icon, enabled }) => {
-            const active =
-              href === '/' ? pathname === '/' : pathname.startsWith(href);
+            const active = isNavActive(pathname, href);
             if (!enabled)
               return (
                 <span

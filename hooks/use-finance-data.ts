@@ -25,8 +25,16 @@ export function useFinanceData() {
   const refresh = useCallback(async () => {
     if (!client) {
       const local = loadLocalFinanceData();
-      setAccounts([...demoAccounts, ...local.accounts]);
-      setTransactions([...local.transactions, ...demoTransactions]);
+      const savedIds = new Set(local.transactions.map((item) => item.id));
+      const savedAccountIds = new Set(local.accounts.map((item) => item.id));
+      setAccounts([
+        ...demoAccounts.filter((item) => !savedAccountIds.has(item.id)),
+        ...local.accounts,
+      ]);
+      setTransactions([
+        ...local.transactions,
+        ...demoTransactions.filter((item) => !savedIds.has(item.id)),
+      ]);
       setLoading(false);
       setError('');
       return;
@@ -53,8 +61,16 @@ export function useFinanceData() {
     if (!client) {
       const syncLocalData = () => {
         const local = loadLocalFinanceData();
-        setAccounts([...demoAccounts, ...local.accounts]);
-        setTransactions([...local.transactions, ...demoTransactions]);
+        const savedIds = new Set(local.transactions.map((item) => item.id));
+        const savedAccountIds = new Set(local.accounts.map((item) => item.id));
+        setAccounts([
+          ...demoAccounts.filter((item) => !savedAccountIds.has(item.id)),
+          ...local.accounts,
+        ]);
+        setTransactions([
+          ...local.transactions,
+          ...demoTransactions.filter((item) => !savedIds.has(item.id)),
+        ]);
       };
       syncLocalData();
       window.addEventListener(LOCAL_IMPORT_EVENT, syncLocalData);
