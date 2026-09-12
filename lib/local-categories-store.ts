@@ -6,6 +6,7 @@ import type {
   FinanceCategory,
 } from '../features/categories/types.ts';
 import { renameLocalTransactionCategory } from './local-finance-store.ts';
+import { renameLocalBudgetCategory } from './local-planning-store.ts';
 
 const STORAGE_KEY = 'kapital.demo.categories.v1';
 export const LOCAL_CATEGORIES_EVENT = 'kapital:categories-updated';
@@ -18,7 +19,9 @@ type StoredCategoryData = {
 function readStored(): StoredCategoryData {
   if (typeof window === 'undefined') return { categories: [], rules: [] };
   try {
-    const value = JSON.parse(window.localStorage.getItem(STORAGE_KEY) || 'null');
+    const value = JSON.parse(
+      window.localStorage.getItem(STORAGE_KEY) || 'null',
+    );
     return {
       categories: Array.isArray(value?.categories) ? value.categories : [],
       rules: Array.isArray(value?.rules)
@@ -73,10 +76,7 @@ export function createLocalCategory(
 ) {
   const nextName = normalizedName(name);
   const stored = readStored();
-  ensureUnique(
-    nextName,
-    [...defaultCategories, ...stored.categories],
-  );
+  ensureUnique(nextName, [...defaultCategories, ...stored.categories]);
   const category: FinanceCategory = {
     id: globalThis.crypto.randomUUID(),
     name: nextName,
@@ -93,11 +93,7 @@ export function renameLocalCategory(id: string, name: string) {
   const stored = readStored();
   const category = stored.categories.find((item) => item.id === id);
   if (!category) throw new Error('Можно переименовать только свою категорию.');
-  ensureUnique(
-    nextName,
-    [...defaultCategories, ...stored.categories],
-    id,
-  );
+  ensureUnique(nextName, [...defaultCategories, ...stored.categories], id);
   const oldName = category.name;
   category.name = nextName;
   stored.rules = stored.rules.map((rule) =>
@@ -106,6 +102,7 @@ export function renameLocalCategory(id: string, name: string) {
       : rule,
   );
   renameLocalTransactionCategory(oldName, nextName);
+  renameLocalBudgetCategory(oldName, nextName);
   writeStored(stored);
 }
 

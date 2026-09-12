@@ -66,3 +66,59 @@ test('analytics loads every Supabase page after the first 500 rows', async () =>
   ]);
   assert.equal(data.transactions[500].id, 'id-500');
 });
+
+test('capital history loads every snapshot page without truncation', async () => {
+  const snapshots = Array.from({ length: 501 }, (_, index) => ({
+    account_id: 'account-1',
+    date: new Date(Date.UTC(2025, 0, 1 + index)).toISOString().slice(0, 10),
+    balance: index,
+  }));
+  const ranges = [];
+  const client = {
+    from(table) {
+      if (table === 'accounts') {
+        return {
+          select() {
+            return {
+              eq() {
+                return { order: async () => ({ data: [], error: null }) };
+              },
+            };
+          },
+        };
+      }
+      if (table === 'transactions') {
+        return {
+          select() {
+            return {
+              order() {
+                return this;
+              },
+              limit: async () => ({ data: [], error: null }),
+            };
+          },
+        };
+      }
+      assert.equal(table, 'balance_snapshots');
+      return {
+        select() {
+          return {
+            order() {
+              return this;
+            },
+            async range(start, end) {
+              ranges.push([start, end]);
+              return { data: snapshots.slice(start, end + 1), error: null };
+            },
+          };
+        },
+      };
+    },
+  };
+  const data = await loadFinanceData(client, { includeSnapshots: true });
+  assert.equal(data.snapshots.length, 501);
+  assert.deepEqual(ranges, [
+    [0, 499],
+    [500, 999],
+  ]);
+});

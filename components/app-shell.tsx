@@ -24,16 +24,22 @@ const nav = [
   { href: '/', label: 'Главная', icon: LayoutDashboard, enabled: true },
   { href: '/transactions', label: 'Операции', icon: List, enabled: true },
   { href: '/analytics', label: 'Аналитика', icon: BarChart3, enabled: true },
-  { href: '/budget', label: 'Бюджет', icon: PiggyBank, enabled: false },
+  { href: '/budget', label: 'Бюджет', icon: PiggyBank, enabled: true },
   { href: '/more', label: 'Ещё', icon: Menu, enabled: true },
 ];
 
 function isNavActive(pathname: string, href: string) {
   if (href === '/') return pathname === '/';
+  if (href === '/transactions' && pathname === '/search') return true;
   if (href === '/more') {
-    return ['/more', '/import', '/categories'].some((path) =>
-      pathname.startsWith(path),
-    );
+    return [
+      '/more',
+      '/import',
+      '/categories',
+      '/subscriptions',
+      '/goals',
+      '/settings',
+    ].some((path) => pathname.startsWith(path));
   }
   return pathname.startsWith(href);
 }
@@ -136,13 +142,14 @@ export function AppShell({ children }: { children: React.ReactNode }) {
               </h1>
             </div>
             <div className="flex items-center gap-2">
-              <button
+              <Link
+                href="/search"
                 className="focus-ring grid size-11 place-items-center rounded-xl text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
-                aria-label="Поиск"
-                disabled
+                aria-label="Глобальный поиск по операциям"
+                aria-current={pathname === '/search' ? 'page' : undefined}
               >
                 <Search className="size-5" aria-hidden="true" />
-              </button>
+              </Link>
               <ThemeToggle />
               {supabaseConfigured ? (
                 <button

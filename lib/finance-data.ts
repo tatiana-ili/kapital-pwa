@@ -16,6 +16,12 @@ export type FinanceAccount = {
   currency: 'RUB';
 };
 
+export type BalanceSnapshot = {
+  accountId: string;
+  date: string;
+  balance: number;
+};
+
 export type FinanceTransaction = {
   id: string;
   date: string;

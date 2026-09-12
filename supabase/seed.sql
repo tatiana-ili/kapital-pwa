@@ -40,6 +40,34 @@ select
 from generated
 on conflict (user_id, source_hash) do nothing;
 
+-- Predictable recurring expenses for the subscriptions demo.
+insert into public.transactions (
+  user_id, bank, account_id, transaction_date, posted_date, amount,
+  merchant, description, category, transaction_type, is_recurring,
+  source_file, source_hash
+)
+select
+  '11111111-1111-4111-8111-111111111111',
+  sample.bank::public.bank_code,
+  sample.account_id::uuid,
+  make_date(2026, months.month_no, sample.day),
+  make_date(2026, months.month_no, sample.day),
+  -sample.amount,
+  sample.merchant,
+  'Ежемесячная оплата: ' || sample.merchant,
+  'Подписки',
+  'expense'::public.transaction_kind,
+  true,
+  'demo-seed-recurring.csv',
+  encode(digest(sample.merchant || '|' || months.month_no::text, 'sha256'), 'hex')
+from (
+  values
+    ('Яндекс Плюс', 'yandex', '23333333-3333-4333-8333-333333333333', 1990, 5),
+    ('Облачное хранилище', 'tbank', '21111111-1111-4111-8111-111111111111', 299, 12)
+) as sample(merchant, bank, account_id, amount, day)
+cross join generate_series(6, 9) as months(month_no)
+on conflict (user_id, source_hash) do nothing;
+
 with snapshots as (
   select date '2025-10-01' + (month_index || ' months')::interval as snapshot_date, month_index
   from generate_series(0,11) month_index

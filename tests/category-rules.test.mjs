@@ -19,6 +19,10 @@ import {
   updateLocalTransaction,
 } from '../lib/local-finance-store.ts';
 import { demoTransactions } from '../lib/demo-data.ts';
+import {
+  loadLocalPlanningData,
+  saveLocalBudget,
+} from '../lib/local-planning-store.ts';
 
 function withLocalStorage(run) {
   const previousWindow = globalThis.window;
@@ -41,7 +45,12 @@ function withLocalStorage(run) {
 test('custom category rule changes future imports and survives category rename', () => {
   withLocalStorage(() => {
     const category = createLocalCategory('Спорт', 'expense');
-    const rule = createLocalCategoryRule('merchant', 'Тестовый клуб', 'Спорт', 'expense');
+    const rule = createLocalCategoryRule(
+      'merchant',
+      'Тестовый клуб',
+      'Спорт',
+      'expense',
+    );
     const table = parseCsv(
       'Дата;Сумма;Магазин;Описание\n11.09.2026;-1500;Тестовый клуб;Абонемент',
     );
@@ -72,10 +81,16 @@ test('custom category rule changes future imports and survives category rename',
       rows: preview.rows,
     });
 
+    saveLocalBudget({ category: 'Спорт', month: '2026-09', amount: 5000 });
+
     renameLocalCategory(category.id, 'Фитнес');
     const renamed = loadLocalCategoryData();
-    assert.equal(renamed.rules.find((item) => item.id === rule.id)?.targetCategory, 'Фитнес');
+    assert.equal(
+      renamed.rules.find((item) => item.id === rule.id)?.targetCategory,
+      'Фитнес',
+    );
     assert.equal(loadLocalFinanceData().transactions[0].category, 'Фитнес');
+    assert.equal(loadLocalPlanningData().budgets[0].category, 'Фитнес');
 
     setLocalCategoryRuleActive(rule.id, false);
     const disabled = loadLocalCategoryData();
@@ -146,11 +161,17 @@ test('custom names cannot shadow a category in another direction', () => {
 
 test('category rename and transfer matching run through invoker policies', async () => {
   const categoryMigration = await readFile(
-    new URL('../supabase/migrations/202609120004_category_management.sql', import.meta.url),
+    new URL(
+      '../supabase/migrations/202609120004_category_management.sql',
+      import.meta.url,
+    ),
     'utf8',
   );
   const integrityMigration = await readFile(
-    new URL('../supabase/migrations/202609120003_import_integrity.sql', import.meta.url),
+    new URL(
+      '../supabase/migrations/202609120003_import_integrity.sql',
+      import.meta.url,
+    ),
     'utf8',
   );
   assert.match(categoryMigration, /security invoker/);

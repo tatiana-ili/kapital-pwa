@@ -5,12 +5,16 @@ import type {
 import { stableHash } from '../features/import/parser.ts';
 import { parseStoredMapping } from '../features/import/profile-mapping.ts';
 import { findTransferCounterpart } from '../features/import/transfers.ts';
-import type { ColumnMapping, StatementFileFormat } from '../features/import/types.ts';
+import type {
+  ColumnMapping,
+  StatementFileFormat,
+} from '../features/import/types.ts';
 import { demoAccounts, demoTransactions } from './demo-data.ts';
 import {
   bankNames,
   type BankCode,
   type FinanceAccount,
+  type BalanceSnapshot,
   type FinanceTransaction,
 } from './finance-data.ts';
 
@@ -34,13 +38,20 @@ type StoredImportProfile = {
 
 type LocalFinanceState = {
   accounts: FinanceAccount[];
+  snapshots: BalanceSnapshot[];
   transactions: FinanceTransaction[];
   imports: StoredImport[];
   profiles: StoredImportProfile[];
 };
 
 function createEmptyState(): LocalFinanceState {
-  return { accounts: [], transactions: [], imports: [], profiles: [] };
+  return {
+    accounts: [],
+    snapshots: [],
+    transactions: [],
+    imports: [],
+    profiles: [],
+  };
 }
 
 function allVisibleTransactions(state: LocalFinanceState) {
@@ -51,8 +62,13 @@ function allVisibleTransactions(state: LocalFinanceState) {
   ];
 }
 
-function upsertTransaction(state: LocalFinanceState, transaction: FinanceTransaction) {
-  const index = state.transactions.findIndex((item) => item.id === transaction.id);
+function upsertTransaction(
+  state: LocalFinanceState,
+  transaction: FinanceTransaction,
+) {
+  const index = state.transactions.findIndex(
+    (item) => item.id === transaction.id,
+  );
   if (index >= 0) state.transactions[index] = transaction;
   else state.transactions.push(transaction);
 }
@@ -66,6 +82,7 @@ export function loadLocalFinanceData(): LocalFinanceState {
     if (!parsed) return createEmptyState();
     return {
       accounts: Array.isArray(parsed.accounts) ? parsed.accounts : [],
+      snapshots: Array.isArray(parsed.snapshots) ? parsed.snapshots : [],
       transactions: Array.isArray(parsed.transactions)
         ? parsed.transactions
         : [],
@@ -135,7 +152,10 @@ export function updateLocalTransaction(updated: FinanceTransaction) {
   window.dispatchEvent(new Event(LOCAL_IMPORT_EVENT));
 }
 
-export function renameLocalTransactionCategory(oldName: string, nextName: string) {
+export function renameLocalTransactionCategory(
+  oldName: string,
+  nextName: string,
+) {
   const state = loadLocalFinanceData();
   state.transactions = state.transactions.map((transaction) =>
     transaction.category === oldName
@@ -180,6 +200,13 @@ export function saveLocalStatement(
   };
   if (accountIndex >= 0) state.accounts[accountIndex] = account;
   else state.accounts.push(account);
+  if (input.currentBalance !== null && input.currentBalance !== undefined) {
+    const date = new Date().toISOString().slice(0, 10);
+    state.snapshots = state.snapshots.filter(
+      (snapshot) => snapshot.accountId !== accountId || snapshot.date !== date,
+    );
+    state.snapshots.push({ accountId, date, balance: input.currentBalance });
+  }
 
   const knownHashes = new Set(
     state.transactions.map((transaction) => transaction.sourceHash),

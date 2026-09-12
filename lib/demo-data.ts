@@ -1,6 +1,7 @@
 import type {
   BankName,
   FinanceAccount,
+  BalanceSnapshot,
   FinanceTransaction,
 } from '@/lib/finance-data';
 
@@ -36,6 +37,24 @@ export const demoAccounts: FinanceAccount[] = [
     currency: 'RUB',
   },
 ];
+
+export const demoBalanceSnapshots: BalanceSnapshot[] = Array.from(
+  { length: 12 },
+  (_, monthIndex) => {
+    const date = new Date(Date.UTC(2025, 9 + monthIndex, 1))
+      .toISOString()
+      .slice(0, 10);
+    return demoAccounts.map((account, accountIndex) => ({
+      accountId: account.id,
+      date,
+      balance: Math.max(
+        0,
+        account.currentBalance -
+          (11 - monthIndex) * (9000 + accountIndex * 1200),
+      ),
+    }));
+  },
+).flat();
 
 const bankAccounts: Array<{ bank: BankName; accountId: string }> =
   demoAccounts.map((account) => ({
@@ -186,9 +205,15 @@ const historicTransactions: DemoTransaction[] = Array.from(
     const isIncome = index % 29 === 0;
     const merchant = isIncome ? 'Зарплата' : template[0];
     const category = isIncome ? 'Зарплата' : template[1];
+    const recurringMerchant = [
+      'YouTube Premium',
+      'Telegram Premium',
+      'МТС',
+      'Кинопоиск',
+    ].includes(merchant);
     const amount = isIncome
       ? 220000 + (index % 3) * 5000
-      : -(template[2] + (index % 7) * 110);
+      : -(recurringMerchant ? template[2] : template[2] + (index % 7) * 110);
     return {
       id: `history-${index + 1}`,
       date,
@@ -215,11 +240,47 @@ const historicTransactions: DemoTransaction[] = Array.from(
   },
 );
 
+const recurringExamples: DemoTransaction[] = [
+  ...['2026-06-05', '2026-07-05', '2026-08-05'].map((date, index) => ({
+    id: `yandex-plus-recurring-${index}`,
+    date,
+    merchant: 'Яндекс Плюс',
+    description: 'Ежемесячная подписка Яндекс Плюс',
+    category: 'Подписки',
+    bank: 'Яндекс Банк' as const,
+    accountId: 'yandex-plus',
+    amount: -1990,
+    currency: 'RUB' as const,
+    transactionType: 'expense' as const,
+    isTransfer: false,
+    isRecurring: true,
+    excludedFromAnalytics: false,
+  })),
+  ...['2026-06-12', '2026-07-12', '2026-08-12', '2026-09-12'].map(
+    (date, index) => ({
+      id: `cloud-recurring-${index}`,
+      date,
+      merchant: 'Облачное хранилище',
+      description: 'Ежемесячная оплата облачного хранилища',
+      category: 'Подписки',
+      bank: 'Т-Банк' as const,
+      accountId: 'tbank-black',
+      amount: -299,
+      currency: 'RUB' as const,
+      transactionType: 'expense' as const,
+      isTransfer: false,
+      isRecurring: true,
+      excludedFromAnalytics: false,
+    }),
+  ),
+];
+
 export const demoTransactions = [
   ...septemberExpenses,
   ...septemberIncome,
   ...transferPair,
   ...historicTransactions,
+  ...recurringExamples,
 ].sort((a, b) => b.date.localeCompare(a.date) || b.id.localeCompare(a.id));
 
 export const demoTransactionCount = demoTransactions.length;

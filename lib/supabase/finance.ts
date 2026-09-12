@@ -3,6 +3,7 @@ import {
   bankNames,
   type BankCode,
   type FinanceAccount,
+  type BalanceSnapshot,
   type FinanceTransaction,
 } from '../finance-data.ts';
 
@@ -38,9 +39,20 @@ type TransactionRow = {
   excluded_from_analytics: boolean;
 };
 
+type SnapshotRow = {
+  account_id: string;
+  date: string;
+  balance: number | string;
+};
+
 export type EditableTransactionFields = Pick<
   FinanceTransaction,
-  'category' | 'isTransfer' | 'transactionType' | 'excludedFromAnalytics'
+  | 'merchant'
+  | 'note'
+  | 'category'
+  | 'isTransfer'
+  | 'transactionType'
+  | 'excludedFromAnalytics'
 >;
 
 function mapAccount(row: AccountRow): FinanceAccount {
@@ -94,11 +106,29 @@ async function loadAllTransactions(client: SupabaseClient) {
   return rows;
 }
 
+async function loadAllBalanceSnapshots(client: SupabaseClient) {
+  const rows: SnapshotRow[] = [];
+  const pageSize = 500;
+  for (let offset = 0; ; offset += pageSize) {
+    const result = await client
+      .from('balance_snapshots')
+      .select('account_id,date,balance')
+      .order('date', { ascending: true })
+      .order('account_id', { ascending: true })
+      .range(offset, offset + pageSize - 1);
+    if (result.error) throw result.error;
+    const page = (result.data ?? []) as SnapshotRow[];
+    rows.push(...page);
+    if (page.length < pageSize) break;
+  }
+  return rows;
+}
+
 export async function loadFinanceData(
   client: SupabaseClient,
-  options: { allTransactions?: boolean } = {},
+  options: { allTransactions?: boolean; includeSnapshots?: boolean } = {},
 ) {
-  const [accountsResult, transactionsResult] = await Promise.all([
+  const [accountsResult, transactionsResult, snapshotRows] = await Promise.all([
     client
       .from('accounts')
       .select('id,bank,name,currency,current_balance')
@@ -111,6 +141,9 @@ export async function loadFinanceData(
           .select(transactionColumns)
           .order('transaction_date', { ascending: false })
           .limit(500),
+    options.includeSnapshots
+      ? loadAllBalanceSnapshots(client)
+      : Promise.resolve([]),
   ]);
 
   if (accountsResult.error) throw accountsResult.error;
@@ -128,6 +161,13 @@ export async function loadFinanceData(
   return {
     accounts: ((accountsResult.data ?? []) as AccountRow[]).map(mapAccount),
     transactions: transactionRows.map(mapTransaction),
+    snapshots: (snapshotRows as SnapshotRow[]).map(
+      (row): BalanceSnapshot => ({
+        accountId: row.account_id,
+        date: row.date,
+        balance: Number(row.balance),
+      }),
+    ),
   };
 }
 
@@ -137,6 +177,9 @@ export async function saveTransactionChanges(
   changes: Partial<EditableTransactionFields>,
 ) {
   const payload: Record<string, unknown> = {};
+  if (changes.merchant !== undefined)
+    payload.merchant = changes.merchant.trim();
+  if (changes.note !== undefined) payload.note = changes.note.trim() || null;
   if (changes.category !== undefined) payload.category = changes.category;
   if (changes.isTransfer !== undefined)
     payload.is_transfer = changes.isTransfer;

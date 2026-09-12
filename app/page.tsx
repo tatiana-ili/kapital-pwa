@@ -7,14 +7,24 @@ import {
   ArrowUpRight,
   ChevronRight,
   FileUp,
+  Lightbulb,
   RefreshCw,
   TrendingUp,
   WalletCards,
 } from 'lucide-react';
 import { AppShell } from '@/components/app-shell';
+import {
+  CapitalHistoryChart,
+  CapitalSparkline,
+} from '@/components/capital-history-chart';
 import { Button } from '@/components/ui/button';
 import { Spinner } from '@/components/ui/spinner';
 import { useFinanceData } from '@/hooks/use-finance-data';
+import {
+  buildCapitalHistory,
+  filterCapitalHistory,
+} from '@/features/capital/history';
+import { generateFinanceInsights } from '@/features/insights/generate';
 import {
   calculateFinanceSummary,
   formatRubles,
@@ -31,10 +41,27 @@ const bankTone: Record<BankName, string> = {
 const categoryColors = ['#2563eb', '#7c3aed', '#0ea5a4', '#f59e0b'];
 
 export default function Home() {
-  const { accounts, dataMode, error, loading, refresh, transactions } =
-    useFinanceData();
+  const {
+    accounts,
+    dataMode,
+    error,
+    loading,
+    refresh,
+    snapshots,
+    transactions,
+  } = useFinanceData({ allTransactions: true, includeSnapshots: true });
   const today = new Date();
   const monthKey = today.toISOString().slice(0, 7);
+  const history = buildCapitalHistory(accounts, snapshots);
+  const recentHistory = filterCapitalHistory(
+    history,
+    '6m',
+    today.toISOString().slice(0, 10),
+  );
+  const insights = generateFinanceInsights(
+    transactions,
+    today.toISOString().slice(0, 10),
+  );
   const summary = calculateFinanceSummary(accounts, transactions, monthKey);
   const monthLabel = new Intl.DateTimeFormat('ru-RU', {
     month: 'long',
@@ -107,36 +134,7 @@ export default function Home() {
                       {formatRubles(summary.net)}
                     </p>
                   </div>
-                  <svg
-                    className="h-14 w-32 overflow-visible sm:w-48"
-                    viewBox="0 0 190 56"
-                    aria-label="Динамика капитала"
-                  >
-                    <title>Динамика капитала</title>
-                    <defs>
-                      <linearGradient
-                        id="spark-fill"
-                        x1="0"
-                        x2="0"
-                        y1="0"
-                        y2="1"
-                      >
-                        <stop offset="0" stopColor="white" stopOpacity=".3" />
-                        <stop offset="1" stopColor="white" stopOpacity="0" />
-                      </linearGradient>
-                    </defs>
-                    <path
-                      d="M0 49 C18 48 22 35 38 38 S62 49 76 31 S102 39 118 22 S146 30 160 15 S178 11 190 4 V56 H0Z"
-                      fill="url(#spark-fill)"
-                    />
-                    <path
-                      d="M0 49 C18 48 22 35 38 38 S62 49 76 31 S102 39 118 22 S146 30 160 15 S178 11 190 4"
-                      fill="none"
-                      stroke="white"
-                      strokeLinecap="round"
-                      strokeWidth="3"
-                    />
-                  </svg>
+                  <CapitalSparkline points={recentHistory} />
                 </div>
               </div>
             </section>
@@ -229,6 +227,45 @@ export default function Home() {
                   tone="primary"
                 />
               </div>
+            </section>
+
+            <CapitalHistoryChart
+              points={history}
+              today={today.toISOString().slice(0, 10)}
+            />
+
+            <section aria-labelledby="insights-title" className="space-y-3">
+              <div className="flex items-center gap-2">
+                <Lightbulb className="size-5 text-primary" aria-hidden="true" />
+                <h2
+                  id="insights-title"
+                  className="text-lg font-semibold tracking-tight"
+                >
+                  Наблюдения
+                </h2>
+              </div>
+              {insights.length ? (
+                <div className="grid gap-3 md:grid-cols-3">
+                  {insights.map((insight) => (
+                    <article
+                      key={insight.id}
+                      className="surface-card rounded-2xl border p-4 sm:p-5"
+                    >
+                      <h3 className="text-base font-semibold leading-snug">
+                        {insight.title}
+                      </h3>
+                      <p className="mt-2 text-sm leading-relaxed text-muted-foreground">
+                        {insight.detail}
+                      </p>
+                    </article>
+                  ))}
+                </div>
+              ) : (
+                <div className="rounded-2xl border border-dashed p-5 text-sm text-muted-foreground">
+                  Пока недостаточно операций за этот и прошлый месяцы для
+                  сравнения. Наблюдения появятся после следующих импортов.
+                </div>
+              )}
             </section>
 
             <section className="grid gap-4 xl:grid-cols-[1.1fr_.9fr]">

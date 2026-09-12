@@ -1,8 +1,16 @@
 'use client';
 
 import { useCallback, useEffect, useState } from 'react';
-import { demoAccounts, demoTransactions } from '@/lib/demo-data';
-import type { FinanceAccount, FinanceTransaction } from '@/lib/finance-data';
+import {
+  demoAccounts,
+  demoBalanceSnapshots,
+  demoTransactions,
+} from '@/lib/demo-data';
+import type {
+  BalanceSnapshot,
+  FinanceAccount,
+  FinanceTransaction,
+} from '@/lib/finance-data';
 import {
   loadLocalFinanceData,
   LOCAL_IMPORT_EVENT,
@@ -11,14 +19,20 @@ import {
 import { createSupabaseBrowserClient } from '@/lib/supabase/browser';
 import { loadFinanceData } from '@/lib/supabase/finance';
 
-export function useFinanceData(options: { allTransactions?: boolean } = {}) {
+export function useFinanceData(
+  options: { allTransactions?: boolean; includeSnapshots?: boolean } = {},
+) {
   const allTransactions = options.allTransactions ?? false;
+  const includeSnapshots = options.includeSnapshots ?? false;
   const [client] = useState(createSupabaseBrowserClient);
   const [accounts, setAccounts] = useState<FinanceAccount[]>(() =>
     client ? [] : demoAccounts,
   );
   const [transactions, setTransactions] = useState<FinanceTransaction[]>(() =>
     client ? [] : demoTransactions,
+  );
+  const [snapshots, setSnapshots] = useState<BalanceSnapshot[]>(() =>
+    client || !includeSnapshots ? [] : demoBalanceSnapshots,
   );
   const [loading, setLoading] = useState(Boolean(client));
   const [error, setError] = useState('');
@@ -36,6 +50,17 @@ export function useFinanceData(options: { allTransactions?: boolean } = {}) {
         ...local.transactions,
         ...demoTransactions.filter((item) => !savedIds.has(item.id)),
       ]);
+      if (includeSnapshots) {
+        const savedKeys = new Set(
+          local.snapshots.map((item) => `${item.accountId}:${item.date}`),
+        );
+        setSnapshots([
+          ...demoBalanceSnapshots.filter(
+            (item) => !savedKeys.has(`${item.accountId}:${item.date}`),
+          ),
+          ...local.snapshots,
+        ]);
+      }
       setLoading(false);
       setError('');
       return;
@@ -44,19 +69,24 @@ export function useFinanceData(options: { allTransactions?: boolean } = {}) {
     setLoading(true);
     setError('');
     try {
-      const data = await loadFinanceData(client, { allTransactions });
+      const data = await loadFinanceData(client, {
+        allTransactions,
+        includeSnapshots,
+      });
       setAccounts(data.accounts);
       setTransactions(data.transactions);
+      setSnapshots(data.snapshots);
     } catch {
       setAccounts([]);
       setTransactions([]);
+      setSnapshots([]);
       setError(
         'Не удалось загрузить данные. Проверьте соединение и попробуйте ещё раз.',
       );
     } finally {
       setLoading(false);
     }
-  }, [client, allTransactions]);
+  }, [client, allTransactions, includeSnapshots]);
 
   useEffect(() => {
     if (!client) {
@@ -72,6 +102,17 @@ export function useFinanceData(options: { allTransactions?: boolean } = {}) {
           ...local.transactions,
           ...demoTransactions.filter((item) => !savedIds.has(item.id)),
         ]);
+        if (includeSnapshots) {
+          const savedKeys = new Set(
+            local.snapshots.map((item) => `${item.accountId}:${item.date}`),
+          );
+          setSnapshots([
+            ...demoBalanceSnapshots.filter(
+              (item) => !savedKeys.has(`${item.accountId}:${item.date}`),
+            ),
+            ...local.snapshots,
+          ]);
+        }
       };
       syncLocalData();
       window.addEventListener(LOCAL_IMPORT_EVENT, syncLocalData);
@@ -83,16 +124,18 @@ export function useFinanceData(options: { allTransactions?: boolean } = {}) {
     }
     let active = true;
 
-    void loadFinanceData(client, { allTransactions })
+    void loadFinanceData(client, { allTransactions, includeSnapshots })
       .then((data) => {
         if (!active) return;
         setAccounts(data.accounts);
         setTransactions(data.transactions);
+        setSnapshots(data.snapshots);
       })
       .catch(() => {
         if (!active) return;
         setAccounts([]);
         setTransactions([]);
+        setSnapshots([]);
         setError(
           'Не удалось загрузить данные. Проверьте соединение и попробуйте ещё раз.',
         );
@@ -104,7 +147,7 @@ export function useFinanceData(options: { allTransactions?: boolean } = {}) {
     return () => {
       active = false;
     };
-  }, [client, allTransactions]);
+  }, [client, allTransactions, includeSnapshots]);
 
   const replaceTransaction = useCallback(
     (updated: FinanceTransaction) => {
@@ -127,5 +170,6 @@ export function useFinanceData(options: { allTransactions?: boolean } = {}) {
     refresh,
     replaceTransaction,
     transactions,
+    snapshots,
   };
 }

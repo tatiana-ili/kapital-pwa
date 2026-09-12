@@ -1,7 +1,15 @@
 'use client';
 
 import Link from 'next/link';
-import { ChevronRight, FileUp, Goal, Tags } from 'lucide-react';
+import {
+  CalendarClock,
+  ChevronRight,
+  FileUp,
+  Goal,
+  Settings2,
+  Sparkles,
+  Tags,
+} from 'lucide-react';
 import { AppShell } from '@/components/app-shell';
 
 const available = [
@@ -17,6 +25,24 @@ const available = [
     description: 'Настроить названия и автоматическую категоризацию',
     icon: Tags,
   },
+  {
+    href: '/subscriptions',
+    label: 'Подписки',
+    description: 'Регулярные платежи и прогноз расходов',
+    icon: CalendarClock,
+  },
+  {
+    href: '/goals',
+    label: 'Финансовые цели',
+    description: 'План накоплений и прогресс по каждой цели',
+    icon: Goal,
+  },
+  {
+    href: '/settings',
+    label: 'Настройки',
+    description: 'Тема, режим данных и учётная запись',
+    icon: Settings2,
+  },
 ];
 
 export default function MorePage() {
@@ -27,7 +53,8 @@ export default function MorePage() {
           <p className="text-sm font-medium text-primary">Настройки финансов</p>
           <h2 className="mt-1 text-3xl font-semibold tracking-[-.04em]">Ещё</h2>
           <p className="mt-2 text-sm leading-relaxed text-muted-foreground">
-            Импортируйте выписки и настройте, как приложение распределяет операции по категориям.
+            Импортируйте выписки, настраивайте категории и следите за
+            регулярными платежами и целями.
           </p>
         </div>
         <div className="surface-card overflow-hidden rounded-3xl border">
@@ -46,16 +73,19 @@ export default function MorePage() {
                   {description}
                 </span>
               </span>
-              <ChevronRight className="size-5 shrink-0 text-muted-foreground" aria-hidden="true" />
+              <ChevronRight
+                className="size-5 shrink-0 text-muted-foreground"
+                aria-hidden="true"
+              />
             </Link>
           ))}
         </div>
         <div className="rounded-3xl border border-dashed p-5 text-sm text-muted-foreground">
           <div className="flex items-center gap-2 font-medium text-foreground">
-            <Goal className="size-5" aria-hidden="true" /> Следующие этапы
+            <Sparkles className="size-5" aria-hidden="true" /> Следующие этапы
           </div>
           <p className="mt-2 leading-relaxed">
-            Аналитика, бюджеты, подписки, цели и AI появятся в следующих итерациях.
+            AI-ассистент запланирован на следующий этап.
           </p>
         </div>
       </section>

@@ -27,6 +27,7 @@ import {
   SheetTitle,
 } from '@/components/ui/sheet';
 import { Spinner } from '@/components/ui/spinner';
+import { Textarea } from '@/components/ui/textarea';
 import { useFinanceData } from '@/hooks/use-finance-data';
 import { useCategories } from '@/hooks/use-categories';
 import {
@@ -62,6 +63,8 @@ export default function TransactionsPage() {
   const [query, setQuery] = useState('');
   const [bank, setBank] = useState<(typeof bankFilters)[number]>('Все банки');
   const [selected, setSelected] = useState<FinanceTransaction | null>(null);
+  const [merchantDraft, setMerchantDraft] = useState('');
+  const [noteDraft, setNoteDraft] = useState('');
   const [saving, setSaving] = useState(false);
   const [savingRule, setSavingRule] = useState(false);
   const [saveMessage, setSaveMessage] = useState('');
@@ -82,6 +85,7 @@ export default function TransactionsPage() {
           transaction.merchant,
           transaction.description,
           transaction.category,
+          transaction.note ?? '',
           transaction.bank,
           String(Math.abs(transaction.amount)),
         ].some((value) => value.toLocaleLowerCase('ru').includes(normalized));
@@ -142,7 +146,8 @@ export default function TransactionsPage() {
         rule.isActive &&
         rule.field === 'merchant' &&
         (rule.direction === 'both' || rule.direction === direction) &&
-        rule.value.toLocaleLowerCase('ru') === merchant.toLocaleLowerCase('ru') &&
+        rule.value.toLocaleLowerCase('ru') ===
+          merchant.toLocaleLowerCase('ru') &&
         rule.targetCategory === nextCategory,
     );
     if (saved) {
@@ -151,6 +156,27 @@ export default function TransactionsPage() {
           ? { merchant, category: nextCategory, direction }
           : null,
       );
+    }
+  }
+
+  async function saveDetails(event: React.SyntheticEvent<HTMLFormElement>) {
+    event.preventDefault();
+    if (!selected || saving) return;
+    const merchant = merchantDraft.trim();
+    const note = noteDraft.trim();
+    if (!merchant || merchant.length > 160) {
+      setSaveError('Укажите продавца длиной до 160 символов.');
+      return;
+    }
+    if (note.length > 1000) {
+      setSaveError('Сократите заметку до 1000 символов.');
+      return;
+    }
+    const saved = await updateSelected({ merchant, note });
+    if (saved) {
+      setMerchantDraft(merchant);
+      setNoteDraft(note);
+      setRuleSuggestion(null);
     }
   }
 
@@ -295,6 +321,8 @@ export default function TransactionsPage() {
                   transaction={transaction}
                   onSelect={() => {
                     setSelected(transaction);
+                    setMerchantDraft(transaction.merchant);
+                    setNoteDraft(transaction.note ?? '');
                     setSaveError('');
                     setSaveMessage('');
                     setRuleSuggestion(null);
@@ -322,6 +350,8 @@ export default function TransactionsPage() {
         onOpenChange={(open) => {
           if (!open && !saving) {
             setSelected(null);
+            setMerchantDraft('');
+            setNoteDraft('');
             setRuleSuggestion(null);
           }
         }}
@@ -346,6 +376,56 @@ export default function TransactionsPage() {
                 </p>
               </SheetHeader>
               <div className="flex-1 space-y-5 overflow-y-auto px-5 py-2">
+                <form
+                  onSubmit={(event) => void saveDetails(event)}
+                  className="space-y-4 rounded-2xl border bg-muted/30 p-4"
+                >
+                  <div>
+                    <label
+                      htmlFor="transaction-merchant"
+                      className="mb-2 block text-sm font-medium"
+                    >
+                      Продавец
+                    </label>
+                    <Input
+                      id="transaction-merchant"
+                      value={merchantDraft}
+                      onChange={(event) => setMerchantDraft(event.target.value)}
+                      maxLength={160}
+                      disabled={saving}
+                      required
+                      className="min-h-11 bg-background text-base md:text-base"
+                    />
+                  </div>
+                  <div>
+                    <label
+                      htmlFor="transaction-note"
+                      className="mb-2 block text-sm font-medium"
+                    >
+                      Заметка
+                    </label>
+                    <Textarea
+                      id="transaction-note"
+                      value={noteDraft}
+                      onChange={(event) => setNoteDraft(event.target.value)}
+                      maxLength={1000}
+                      disabled={saving}
+                      placeholder="Для чего была эта операция"
+                      className="min-h-24 bg-background text-base md:text-base"
+                    />
+                  </div>
+                  <Button
+                    type="submit"
+                    disabled={
+                      saving ||
+                      (merchantDraft.trim() === selected.merchant &&
+                        noteDraft.trim() === (selected.note ?? ''))
+                    }
+                    className="min-h-11 w-full cursor-pointer"
+                  >
+                    Сохранить продавца и заметку
+                  </Button>
+                </form>
                 <Detail label="Категория">
                   <select
                     aria-label="Категория"
@@ -371,10 +451,12 @@ export default function TransactionsPage() {
                 {ruleSuggestion && (
                   <div className="rounded-2xl border border-primary/20 bg-primary/[.06] p-4">
                     <p className="text-sm font-medium">
-                      Всегда относить операции «{ruleSuggestion.merchant}» к категории «{ruleSuggestion.category}»?
+                      Всегда относить операции «{ruleSuggestion.merchant}» к
+                      категории «{ruleSuggestion.category}»?
                     </p>
                     <p className="mt-1 text-xs leading-relaxed text-muted-foreground">
-                      Правило применится к следующим импортам. Эту операцию вы уже изменили.
+                      Правило применится к следующим импортам. Эту операцию вы
+                      уже изменили.
                     </p>
                     <div className="mt-3 flex flex-wrap gap-2">
                       <Button
