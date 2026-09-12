@@ -39,4 +39,4 @@ pnpm build
 
 Production build создаётся в `out/` и публикуется как статическая PWA. Service worker кеширует только статические файлы и никогда не сохраняет навигационные страницы, API-ответы или ответы Supabase.
 
-Архитектурные решения, контракт будущих импортёров и риски описаны в [docs/architecture.md](docs/architecture.md).
+Полное техническое задание и план этапов сохранены в [docs/technical-spec.md](docs/technical-spec.md). Архитектурные решения, контракт будущих импортёров и риски описаны в [docs/architecture.md](docs/architecture.md).
