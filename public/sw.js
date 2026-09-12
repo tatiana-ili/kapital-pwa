@@ -1,4 +1,5 @@
-const CACHE = 'kapital-static-v3';
+// Change the cache name when publishing a new client configuration.
+const CACHE = 'kapital-static-v4';
 const STATIC_ASSETS = [
   '/manifest.webmanifest',
   '/favicon.svg',
