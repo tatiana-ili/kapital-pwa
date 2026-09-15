@@ -20,6 +20,11 @@ import {
 } from '../lib/local-finance-store.ts';
 import { demoTransactions } from '../lib/demo-data.ts';
 import {
+  ownTransferChanges,
+  transactionCanBeAddedToTarget,
+  transactionMatchesReviewTarget,
+} from '../features/categories/review.ts';
+import {
   loadLocalPlanningData,
   saveLocalBudget,
 } from '../lib/local-planning-store.ts';
@@ -350,6 +355,58 @@ test('custom names cannot shadow a category in another direction', () => {
       /уже существует/,
     );
   });
+});
+
+test('category review keeps category and own-transfer status independent', () => {
+  const transfer = demoTransactions.find((item) => item.isTransfer);
+  const expense = demoTransactions.find(
+    (item) => !item.isTransfer && item.amount < 0,
+  );
+  assert.ok(transfer);
+  assert.ok(expense);
+
+  const ownTransfers = { kind: 'own-transfers' };
+  const groceries = {
+    kind: 'category',
+    category: {
+      id: 'groceries',
+      name: expense.category,
+      direction: 'expense',
+      isSystem: true,
+    },
+  };
+
+  assert.equal(transactionMatchesReviewTarget(transfer, ownTransfers), true);
+  assert.equal(transactionMatchesReviewTarget(expense, ownTransfers), false);
+  assert.equal(transactionMatchesReviewTarget(expense, groceries), true);
+  assert.equal(transactionCanBeAddedToTarget(transfer, groceries), true);
+  assert.equal(
+    transactionCanBeAddedToTarget(
+      { ...expense, amount: Math.abs(expense.amount) },
+      groceries,
+    ),
+    false,
+  );
+});
+
+test('own-transfer review updates analytics flags without changing category', () => {
+  const expense = demoTransactions.find(
+    (item) => !item.isTransfer && item.amount < 0,
+  );
+  assert.ok(expense);
+
+  const markChanges = ownTransferChanges(expense, true);
+  assert.deepEqual(markChanges, {
+    isTransfer: true,
+    transactionType: 'transfer',
+    excludedFromAnalytics: true,
+  });
+  assert.deepEqual(ownTransferChanges(expense, false), {
+    isTransfer: false,
+    transactionType: 'expense',
+    excludedFromAnalytics: false,
+  });
+  assert.equal('category' in markChanges, false);
 });
 
 test('category rename and transfer matching run through invoker policies', async () => {
