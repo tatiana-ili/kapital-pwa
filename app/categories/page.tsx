@@ -88,7 +88,7 @@ export default function CategoriesPage() {
     const saved = await createRule(ruleField, ruleValue, selectedRuleTarget, ruleDirection);
     if (saved) {
       setRuleValue('');
-      setMessage('Правило сохранено для следующих импортов.');
+      setMessage('Правило сохранено и применено к уже загруженным операциям.');
     }
     setBusy(false);
   }
@@ -98,7 +98,11 @@ export default function CategoriesPage() {
     setBusy(true);
     setMessage('');
     const saved = await setRuleActive(id, isActive);
-    if (saved) setMessage(isActive ? 'Правило включено.' : 'Правило выключено.');
+    if (saved) setMessage(
+      isActive
+        ? 'Правило включено и применено к уже загруженным операциям.'
+        : 'Правило выключено. Уже назначенные категории сохранены.',
+    );
     setBusy(false);
   }
 
@@ -107,7 +111,7 @@ export default function CategoriesPage() {
     setBusy(true);
     setMessage('');
     const saved = await deleteRule(id);
-    if (saved) setMessage('Правило удалено.');
+    if (saved) setMessage('Правило удалено. Уже назначенные категории сохранены.');
     setBusy(false);
   }
 
@@ -229,7 +233,7 @@ export default function CategoriesPage() {
                 <h3 className="text-lg font-semibold">Новое правило</h3>
               </div>
               <p className="mt-1 text-sm leading-relaxed text-muted-foreground">
-                Правила применяются к следующим импортам и не меняют уже сохранённые операции.
+                Правила сразу применяются к уже загруженным операциям и к новым импортам.
               </p>
               <div className="mt-4 space-y-4">
                 <label className="block space-y-2 text-sm font-medium">

@@ -411,7 +411,7 @@ export default function ImportPage() {
       }
       setPendingDescriptionRules({});
       setRuleMessage(
-        `Сохранено правил по повторяющимся описаниям: ${pending.length}. Они применятся при следующих импортах.`,
+        `Сохранено правил по повторяющимся описаниям: ${pending.length}. Они применены к уже загруженным операциям.`,
       );
       setError('');
       return true;
@@ -432,7 +432,9 @@ export default function ImportPage() {
       );
       if (saved) {
         setRuleSuggestion(null);
-        setRuleMessage('Правило сохранено для следующих импортов.');
+        setRuleMessage(
+          'Правило сохранено и применено к уже загруженным операциям.',
+        );
       }
     } finally {
       setSavingRule(false);
@@ -867,8 +869,8 @@ export default function ImportPage() {
                       категории «{ruleSuggestion.category}»?
                     </p>
                     <p className="mt-1 text-xs text-muted-foreground">
-                      Текущая строка уже изменена. Правило применится к
-                      следующим импортам.
+                      Правило применится к уже загруженным и будущим операциям с
+                      таким продавцом.
                     </p>
                     <div className="mt-3 flex flex-wrap gap-2">
                       <Button
@@ -1220,7 +1222,7 @@ function GroupedDescriptionsPanel({
           </div>
           <p className="mt-1 text-sm leading-relaxed text-muted-foreground">
             Выберите категорию один раз — она применится ко всей группе. Правило
-            по описанию сохранится для следующих импортов.
+            по описанию применится также к уже загруженным операциям.
           </p>
         </div>
       </div>

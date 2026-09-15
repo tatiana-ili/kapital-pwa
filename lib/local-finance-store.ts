@@ -2,6 +2,11 @@ import type {
   StatementCommitInput,
   StatementCommitResult,
 } from '../features/import/commit-types.ts';
+import { categoryRuleUpdates } from '../features/categories/rules.ts';
+import type {
+  CategoryRule,
+  FinanceCategory,
+} from '../features/categories/types.ts';
 import { stableHash } from '../features/import/parser.ts';
 import { parseStoredMapping } from '../features/import/profile-mapping.ts';
 import { findTransferCounterpart } from '../features/import/transfers.ts';
@@ -164,6 +169,29 @@ export function renameLocalTransactionCategory(
   );
   window.localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
   window.dispatchEvent(new Event(LOCAL_IMPORT_EVENT));
+}
+
+export function applyLocalCategoryRules(
+  categories: FinanceCategory[],
+  rules: CategoryRule[],
+) {
+  const state = loadLocalFinanceData();
+  const visible = allVisibleTransactions(state);
+  const byId = new Map(
+    visible.map((transaction) => [transaction.id, transaction]),
+  );
+  const updates = categoryRuleUpdates(visible, categories, rules);
+  for (const update of updates) {
+    const transaction = byId.get(update.id);
+    if (transaction) {
+      upsertTransaction(state, { ...transaction, category: update.category });
+    }
+  }
+  if (updates.length) {
+    window.localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
+    window.dispatchEvent(new Event(LOCAL_IMPORT_EVENT));
+  }
+  return updates.length;
 }
 
 export function saveLocalStatement(

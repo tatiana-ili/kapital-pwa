@@ -5,7 +5,10 @@ import type {
   CategoryRule,
   FinanceCategory,
 } from '../features/categories/types.ts';
-import { renameLocalTransactionCategory } from './local-finance-store.ts';
+import {
+  applyLocalCategoryRules,
+  renameLocalTransactionCategory,
+} from './local-finance-store.ts';
 import { renameLocalBudgetCategory } from './local-planning-store.ts';
 
 const STORAGE_KEY = 'kapital.demo.categories.v1';
@@ -137,6 +140,10 @@ export function createLocalCategoryRule(
     existing.targetCategory = targetCategory;
     existing.isActive = true;
     writeStored(stored);
+    applyLocalCategoryRules(
+      [...defaultCategories, ...stored.categories],
+      stored.rules,
+    );
     return existing;
   }
   const rule: CategoryRule = {
@@ -152,6 +159,10 @@ export function createLocalCategoryRule(
   };
   stored.rules.push(rule);
   writeStored(stored);
+  applyLocalCategoryRules(
+    [...defaultCategories, ...stored.categories],
+    stored.rules,
+  );
   return rule;
 }
 
@@ -161,6 +172,12 @@ export function setLocalCategoryRuleActive(id: string, isActive: boolean) {
     rule.id === id ? { ...rule, isActive } : rule,
   );
   writeStored(stored);
+  if (isActive) {
+    applyLocalCategoryRules(
+      [...defaultCategories, ...stored.categories],
+      stored.rules,
+    );
+  }
 }
 
 export function deleteLocalCategoryRule(id: string) {

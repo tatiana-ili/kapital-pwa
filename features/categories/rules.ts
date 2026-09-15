@@ -1,6 +1,15 @@
 import { categoriesForAmount } from './defaults.ts';
 import type { CategoryRule, FinanceCategory } from './types.ts';
 
+type ExistingTransaction = {
+  id: string;
+  merchant: string;
+  description: string;
+  amount: number;
+  category: string;
+  isTransfer?: boolean;
+};
+
 export function applyCategoryRules(
   input: {
     merchant: string;
@@ -39,4 +48,22 @@ export function applyCategoryRules(
     }
   }
   return fallback;
+}
+
+export function categoryRuleUpdates(
+  transactions: ExistingTransaction[],
+  categories: FinanceCategory[],
+  rules: CategoryRule[],
+) {
+  return transactions.flatMap((transaction) => {
+    const category = applyCategoryRules(
+      transaction,
+      transaction.category,
+      categories,
+      rules,
+    );
+    return category === transaction.category
+      ? []
+      : [{ id: transaction.id, category }];
+  });
 }

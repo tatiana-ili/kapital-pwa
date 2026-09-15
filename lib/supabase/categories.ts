@@ -5,6 +5,7 @@ import type {
   CategoryRule,
   FinanceCategory,
 } from '../../features/categories/types.ts';
+import { categoryRuleUpdates } from '../../features/categories/rules.ts';
 
 type CategoryRow = {
   id: string;
@@ -25,6 +26,68 @@ type RuleRow = {
   is_active: boolean;
 };
 
+type RuleTransactionRow = {
+  id: string;
+  merchant: string;
+  description: string;
+  amount: number | string;
+  category: string;
+  is_transfer: boolean;
+};
+
+async function loadRuleTransactions(client: SupabaseClient) {
+  const rows: RuleTransactionRow[] = [];
+  const pageSize = 500;
+  for (let offset = 0; ; offset += pageSize) {
+    const result = await client
+      .from('transactions')
+      .select('id,merchant,description,amount,category,is_transfer')
+      .order('id', { ascending: true })
+      .range(offset, offset + pageSize - 1);
+    if (result.error) throw result.error;
+    const page = (result.data ?? []) as RuleTransactionRow[];
+    rows.push(...page);
+    if (page.length < pageSize) break;
+  }
+  return rows;
+}
+
+async function applyStoredCategoryRules(client: SupabaseClient) {
+  const [{ categories, rules }, transactions] = await Promise.all([
+    loadCategoryData(client),
+    loadRuleTransactions(client),
+  ]);
+  const updates = categoryRuleUpdates(
+    transactions.map((transaction) => ({
+      id: transaction.id,
+      merchant: transaction.merchant,
+      description: transaction.description,
+      amount: Number(transaction.amount),
+      category: transaction.category,
+      isTransfer: transaction.is_transfer,
+    })),
+    categories,
+    rules,
+  );
+  const idsByCategory = new Map<string, string[]>();
+  for (const update of updates) {
+    idsByCategory.set(update.category, [
+      ...(idsByCategory.get(update.category) ?? []),
+      update.id,
+    ]);
+  }
+  for (const [category, ids] of idsByCategory) {
+    for (let offset = 0; offset < ids.length; offset += 100) {
+      const { error } = await client
+        .from('transactions')
+        .update({ category })
+        .in('id', ids.slice(offset, offset + 100));
+      if (error) throw error;
+    }
+  }
+  return updates.length;
+}
+
 async function currentUserId(client: SupabaseClient) {
   const { data, error } = await client.auth.getUser();
   if (error || !data.user) throw error || new Error('Требуется вход.');
@@ -41,19 +104,21 @@ export async function loadCategoryData(
       .order('name', { ascending: true }),
     client
       .from('category_rules')
-      .select('id,name,priority,field,operator,value,direction,target_category,is_active')
+      .select(
+        'id,name,priority,field,operator,value,direction,target_category,is_active',
+      )
       .order('priority', { ascending: true }),
   ]);
   if (categoriesResult.error) throw categoriesResult.error;
   if (rulesResult.error) throw rulesResult.error;
-  const categories = ((categoriesResult.data ?? []) as CategoryRow[]).map<FinanceCategory>(
-    (row) => ({
-      id: row.id,
-      name: row.name,
-      direction: row.direction,
-      isSystem: row.is_system,
-    }),
-  );
+  const categories = (
+    (categoriesResult.data ?? []) as CategoryRow[]
+  ).map<FinanceCategory>((row) => ({
+    id: row.id,
+    name: row.name,
+    direction: row.direction,
+    isSystem: row.is_system,
+  }));
   const rules = ((rulesResult.data ?? []) as RuleRow[])
     .filter(
       (row) =>
@@ -145,7 +210,7 @@ export async function createCategoryRule(
       .update({ target_category: targetCategory, is_active: true })
       .eq('id', existing.id);
     if (error) throw error;
-    return;
+    return applyStoredCategoryRules(client);
   }
   const { error } = await client.from('category_rules').insert({
     user_id: userId,
@@ -159,6 +224,7 @@ export async function createCategoryRule(
     is_active: true,
   });
   if (error) throw error;
+  return applyStoredCategoryRules(client);
 }
 
 export async function setCategoryRuleActive(
@@ -171,6 +237,7 @@ export async function setCategoryRuleActive(
     .update({ is_active: isActive })
     .eq('id', id);
   if (error) throw error;
+  if (isActive) return applyStoredCategoryRules(client);
 }
 
 export async function deleteCategoryRule(client: SupabaseClient, id: string) {

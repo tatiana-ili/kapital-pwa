@@ -191,8 +191,11 @@ export default function TransactionsPage() {
         ruleSuggestion.direction,
       );
       if (created) {
+        await refresh();
         setRuleSuggestion(null);
-        setSaveMessage('Правило сохранено для будущих импортов.');
+        setSaveMessage(
+          'Правило сохранено и применено ко всем подходящим операциям.',
+        );
       }
     } finally {
       setSavingRule(false);
@@ -455,8 +458,8 @@ export default function TransactionsPage() {
                       категории «{ruleSuggestion.category}»?
                     </p>
                     <p className="mt-1 text-xs leading-relaxed text-muted-foreground">
-                      Правило применится к следующим импортам. Эту операцию вы
-                      уже изменили.
+                      Правило применится ко всем уже загруженным и будущим
+                      операциям с таким продавцом.
                     </p>
                     <div className="mt-3 flex flex-wrap gap-2">
                       <Button
