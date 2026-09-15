@@ -60,26 +60,60 @@ const CANONICAL_HEADERS = [
 const datePattern = /\b\d{1,2}[./-]\d{1,2}[./-]\d{2,4}\b/;
 const moneyPattern = /[+−–—-]?\s*\d[\d\s]*(?:[.,]\d{2})/g;
 
+const pdfBankMatchers: Array<[BankCode, RegExp[]]> = [
+  ['tbank', [/т[ -]?банк/i, /тинькофф/i, /tinkoff/i, /tbank/i]],
+  ['yandex', [/яндекс[ -]?банк/i, /yandex[ -]?bank/i]],
+  ['sber', [/сбер/i, /sber/i]],
+];
+
 export function parseKnownBankPdf(
   pages: PdfTextPage[],
   fileName: string,
 ): KnownPdfResult | undefined {
+  const bank = detectKnownPdfBank(pages, fileName);
+  if (bank === 'tbank') return parseTbankPdf(pages);
+  if (bank === 'yandex') return parseYandexPdf(pages);
+  if (bank === 'sber') return parseSberPdf(pages);
+  return undefined;
+}
+
+function detectKnownPdfBank(pages: PdfTextPage[], fileName: string) {
+  const firstPage = pages[0];
+  const headerBank = firstPage
+    ? uniqueBankMatch(
+        normalizeText(
+          firstPage.items
+            .filter((item) => item.y >= firstPage.height * 0.7)
+            .map((item) => item.str)
+            .join(' '),
+        ),
+      )
+    : undefined;
+  if (headerBank) return headerBank;
+
+  const fileNameBank = uniqueBankMatch(normalizeText(fileName));
+  if (fileNameBank) return fileNameBank;
+
   const sample = normalizeText(
-    `${fileName} ${pages
+    pages
       .slice(0, 5)
       .flatMap((page) => page.items)
       .map((item) => item.str)
-      .join(' ')}`,
+      .join(' '),
   );
+  if (/выписка по договору за период/i.test(sample)) return 'yandex';
+  if (/справка о движении средств/i.test(sample)) return 'tbank';
+  if (/индивидуальная выписка по плат[её]жному сч[её]ту/i.test(sample)) {
+    return 'sber';
+  }
+  return uniqueBankMatch(sample);
+}
 
-  if (/т[ -]?банк|тинькофф|tinkoff|tbank/i.test(sample)) {
-    return parseTbankPdf(pages);
-  }
-  if (/яндекс[ -]?банк|yandex[ -]?bank/i.test(sample)) {
-    return parseYandexPdf(pages);
-  }
-  if (/сбер|sber/i.test(sample)) return parseSberPdf(pages);
-  return undefined;
+function uniqueBankMatch(sample: string) {
+  const matches = pdfBankMatchers
+    .filter(([, patterns]) => patterns.some((pattern) => pattern.test(sample)))
+    .map(([bank]) => bank);
+  return matches.length === 1 ? matches[0] : undefined;
 }
 
 function parseTbankPdf(pages: PdfTextPage[]): KnownPdfResult {

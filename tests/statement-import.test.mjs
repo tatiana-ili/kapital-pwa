@@ -288,7 +288,7 @@ test('Yandex PDF layout uses contract currency and auto-confirms exact own-accou
         ],
       ]),
     ],
-    'Выписка_ЯндексБанк.pdf',
+    'statement.pdf',
   );
   const source = pdfSource('Выписка_ЯндексБанк.pdf', parsed);
   const preview = parseStatementTable({
@@ -304,6 +304,68 @@ test('Yandex PDF layout uses contract currency and auto-confirms exact own-accou
   assert.equal(preview.rows[1].status, 'new');
   assert.equal(preview.rows[1].selected, true);
   assert.match(preview.rows[0].sourceHash, /^v3-/);
+});
+
+test('Yandex PDF identity wins over a T-Bank counterparty in transaction text', () => {
+  const parsed = parseKnownBankPdf(
+    [
+      pdfPage(1, [
+        [780, [[20, 'Яндекс Банк']]],
+        [
+          750,
+          [[20, 'Выписка по Договору за период с 01.01.2026 по 01.01.2026']],
+        ],
+        [
+          710,
+          [
+            [20, 'Описание операции'],
+            [205, 'Дата и время операции МСК'],
+          ],
+        ],
+        [
+          680,
+          [
+            [20, 'Перевод в Т-Банк'],
+            [205, '01.01.2026'],
+            [295, '01.01.2026'],
+            [420, '-40,00 ₽'],
+            [520, '-40,00 ₽'],
+          ],
+        ],
+      ]),
+    ],
+    'Выписка_ЯндексБанк.pdf',
+  );
+
+  assert.equal(parsed.bank, 'yandex');
+  assert.equal(parsed.diagnostics.recognizedRowCount, 1);
+  assert.equal(parsed.table[1][4], 'Перевод в Т-Банк');
+});
+
+test('T-Bank PDF identity wins over a Yandex Bank merchant', () => {
+  const parsed = parseKnownBankPdf(
+    [
+      pdfPage(1, [
+        [780, [[50, 'Т-Банк']]],
+        [750, [[50, 'Справка о движении средств']]],
+        [710, [[50, 'Дата и время операции']]],
+        [
+          680,
+          [
+            [50, '01.01.2026'],
+            [130, '01.01.2026'],
+            [200, '-40,00 ₽'],
+            [295, '-40,00 ₽'],
+            [400, 'Оплата Яндекс Банк'],
+          ],
+        ],
+      ]),
+    ],
+    'statement.pdf',
+  );
+
+  assert.equal(parsed.bank, 'tbank');
+  assert.equal(parsed.diagnostics.recognizedRowCount, 1);
 });
 
 test('Sber PDF layout treats unsigned debits as expenses and verifies both totals', () => {
