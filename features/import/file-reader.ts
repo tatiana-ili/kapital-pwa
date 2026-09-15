@@ -1,5 +1,6 @@
 import { inspectStatementTable, stableHash } from './parser.ts';
 import { detectBankParser, inferBankMapping } from './banks/index.ts';
+import { parseKnownBankPdf, type PdfTextPage } from './pdf-layout.ts';
 import type {
   StatementCell,
   StatementFileFormat,
@@ -7,11 +8,18 @@ import type {
   StatementTable,
 } from './types.ts';
 
-const MAX_FILE_SIZE = 20 * 1024 * 1024;
+const MAX_FILE_SIZE = 50 * 1024 * 1024;
 
-export async function readStatementFile(file: File): Promise<StatementSource> {
+type ReadStatementOptions = {
+  onPdfProgress?: (currentPage: number, totalPages: number) => void;
+};
+
+export async function readStatementFile(
+  file: File,
+  options: ReadStatementOptions = {},
+): Promise<StatementSource> {
   if (file.size > MAX_FILE_SIZE) {
-    throw new Error('Файл больше 20 МБ. Выберите более короткую выписку.');
+    throw new Error('Файл больше 50 МБ. Выберите более короткую выписку.');
   }
 
   const fileFormat = detectFileFormat(file);
@@ -19,6 +27,8 @@ export async function readStatementFile(file: File): Promise<StatementSource> {
   const fileHash = await hashBytes(bytes);
   let table: StatementTable;
   let warning: string | undefined;
+  let pdfDiagnostics: StatementSource['pdfDiagnostics'];
+  let detectedPdfBank: StatementSource['inspection']['detectedBank'];
 
   if (fileFormat === 'csv') {
     table = parseCsv(decodeText(bytes));
@@ -26,9 +36,14 @@ export async function readStatementFile(file: File): Promise<StatementSource> {
     const { readSheet } = await import('read-excel-file/browser');
     table = (await readSheet(bytes)) as StatementTable;
   } else {
-    table = await readPdf(bytes);
-    warning =
-      'PDF распознаётся по текстовому слою. Если это скан, сохраните выписку как XLSX или CSV.';
+    const pdf = await readPdf(bytes, file.name, options.onPdfProgress);
+    table = pdf.table;
+    pdfDiagnostics = 'diagnostics' in pdf ? pdf.diagnostics : undefined;
+    detectedPdfBank = 'bank' in pdf ? pdf.bank : undefined;
+    if (!pdfDiagnostics || pdfDiagnostics.confidence !== 'high') {
+      warning =
+        'PDF прочитан по текстовому слою. Проверьте только отмеченные расхождения перед сохранением.';
+    }
   }
 
   const inspection = inspectStatementTable(table, file.name);
@@ -37,7 +52,7 @@ export async function readStatementFile(file: File): Promise<StatementSource> {
     table,
     inspection.headerRowIndex,
   );
-  inspection.detectedBank = bankParser?.id;
+  inspection.detectedBank = detectedPdfBank ?? bankParser?.id;
   if (bankParser) {
     inspection.mapping = inferBankMapping(
       bankParser.id,
@@ -53,6 +68,7 @@ export async function readStatementFile(file: File): Promise<StatementSource> {
     table,
     inspection,
     warning,
+    pdfDiagnostics,
   };
 }
 
@@ -136,16 +152,21 @@ function countOutsideQuotes(line: string, delimiter: string) {
   return count;
 }
 
-async function readPdf(bytes: ArrayBuffer): Promise<StatementTable> {
+async function readPdf(
+  bytes: ArrayBuffer,
+  fileName: string,
+  onProgress?: (currentPage: number, totalPages: number) => void,
+) {
   const pdfjs = await import('pdfjs-dist/legacy/build/pdf.mjs');
   pdfjs.GlobalWorkerOptions.workerSrc = '/pdf.worker.min.mjs';
   const document = await pdfjs.getDocument({
     data: new Uint8Array(bytes),
   }).promise;
-  const table: StatementTable = [];
+  const pages: PdfTextPage[] = [];
 
   for (let pageNumber = 1; pageNumber <= document.numPages; pageNumber += 1) {
     const page = await document.getPage(pageNumber);
+    const viewport = page.getViewport({ scale: 1 });
     const content = await page.getTextContent();
     const items = content.items
       .flatMap((item) =>
@@ -161,6 +182,34 @@ async function readPdf(bytes: ArrayBuffer): Promise<StatementTable> {
           : [],
       )
       .filter((item) => item.str);
+    pages.push({
+      pageNumber,
+      width: viewport.width,
+      height: viewport.height,
+      items,
+    });
+    onProgress?.(pageNumber, document.numPages);
+  }
+
+  if (!pages.some((page) => page.items.length)) {
+    throw new Error(
+      'В PDF нет текстового слоя. Это похоже на скан или обезличенную копию-изображение — импортируйте оригинальный PDF из приложения банка либо CSV/XLSX.',
+    );
+  }
+
+  const known = parseKnownBankPdf(pages, fileName);
+  if (known) {
+    if (known.diagnostics.recognizedRowCount === 0) {
+      throw new Error(
+        `Формат ${known.diagnostics.templateLabel} определён, но операции не найдены. Используйте оригинальный PDF из приложения банка.`,
+      );
+    }
+    return known;
+  }
+
+  const table: StatementTable = [];
+  for (const pdfPage of pages) {
+    const items = pdfPage.items;
     const lines = new Map<number, typeof items>();
 
     for (const item of items) {
@@ -192,7 +241,7 @@ async function readPdf(bytes: ArrayBuffer): Promise<StatementTable> {
       'В PDF нет текстового слоя. Это похоже на скан — используйте CSV или XLSX.',
     );
   }
-  return table;
+  return { table };
 }
 
 async function hashBytes(bytes: ArrayBuffer) {

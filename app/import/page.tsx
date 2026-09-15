@@ -25,7 +25,10 @@ import { Input } from '@/components/ui/input';
 import { Progress } from '@/components/ui/progress';
 import { Spinner } from '@/components/ui/spinner';
 import type { StatementCommitResult } from '@/features/import/commit-types';
-import { bankStatementParsers, inferBankMapping } from '@/features/import/banks';
+import {
+  bankStatementParsers,
+  inferBankMapping,
+} from '@/features/import/banks';
 import { readStatementFile } from '@/features/import/file-reader';
 import { describeStatementReadError } from '@/features/import/read-error';
 import { inspectStatementTable, parseAmount } from '@/features/import/parser';
@@ -88,12 +91,17 @@ export default function ImportPage() {
   const [mapping, setMapping] = useState<ColumnMapping>({});
   const [preview, setPreview] = useState<StatementPreview | null>(null);
   const [reading, setReading] = useState(false);
+  const [pdfProgress, setPdfProgress] = useState<{
+    current: number;
+    total: number;
+  } | null>(null);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
   const [reloadSuggested, setReloadSuggested] = useState(false);
   const [pdfReviewConfirmed, setPdfReviewConfirmed] = useState(false);
   const [result, setResult] = useState<StatementCommitResult | null>(null);
   const [visibleRows, setVisibleRows] = useState(30);
+  const [showOnlyAttention, setShowOnlyAttention] = useState(false);
   const [ruleSuggestion, setRuleSuggestion] = useState<{
     merchant: string;
     category: string;
@@ -129,12 +137,17 @@ export default function ImportPage() {
   }, [rowsToSave]);
   const pdfNeedsReview =
     preview?.fileFormat === 'pdf' &&
-    (Boolean(preview.pdfUnrecognizedLineCount) || preview.counts.error > 0);
+    (Boolean(preview.pdfUnrecognizedLineCount) ||
+      preview.counts.error > 0 ||
+      preview.pdfDiagnostics?.confidence === 'review');
   const parsedBalance = balance.trim() ? parseAmount(balance) : undefined;
   const balanceIsInvalid = balance.trim() !== '' && parsedBalance === undefined;
   const progress = result ? 100 : preview ? 66 : 33;
 
-  async function resolveMapping(nextSource: StatementSource, nextBank: BankCode) {
+  async function resolveMapping(
+    nextSource: StatementSource,
+    nextBank: BankCode,
+  ) {
     const generic = inspectStatementTable(
       nextSource.table,
       nextSource.fileName,
@@ -190,6 +203,7 @@ export default function ImportPage() {
         categoryRules,
       });
       setPreview(parsed);
+      setShowOnlyAttention(parsed.counts.review + parsed.counts.error > 0);
       setError('');
       if (parsed.endingBalance !== undefined && !balance) {
         setBalance(String(parsed.endingBalance));
@@ -207,6 +221,7 @@ export default function ImportPage() {
   async function handleFile(file?: File) {
     if (!file || reading || categoriesLoading || categoriesError) return;
     setReading(true);
+    setPdfProgress(null);
     setError('');
     setReloadSuggested(false);
     setPdfReviewConfirmed(false);
@@ -216,7 +231,9 @@ export default function ImportPage() {
     setRuleMessage('');
     setVisibleRows(30);
     try {
-      const nextSource = await readStatementFile(file);
+      const nextSource = await readStatementFile(file, {
+        onPdfProgress: (current, total) => setPdfProgress({ current, total }),
+      });
       const nextBank = nextSource.inspection.detectedBank;
       setSource(nextSource);
       if (!nextBank) {
@@ -241,6 +258,7 @@ export default function ImportPage() {
       setReloadSuggested(readError.reloadSuggested);
     } finally {
       setReading(false);
+      setPdfProgress(null);
       if (inputRef.current) inputRef.current.value = '';
     }
   }
@@ -279,7 +297,8 @@ export default function ImportPage() {
           rule.isActive &&
           rule.field === 'merchant' &&
           (rule.direction === 'both' || rule.direction === direction) &&
-          rule.value.toLocaleLowerCase('ru') === merchant.toLocaleLowerCase('ru') &&
+          rule.value.toLocaleLowerCase('ru') ===
+            merchant.toLocaleLowerCase('ru') &&
           rule.targetCategory === changes.category,
       );
       setRuleSuggestion(
@@ -390,6 +409,7 @@ export default function ImportPage() {
     setMapping({});
     setBalance('');
     setVisibleRows(30);
+    setShowOnlyAttention(false);
   }
 
   return (
@@ -469,13 +489,15 @@ export default function ImportPage() {
                   </span>
                   <strong className="mt-4 text-lg">
                     {reading
-                      ? 'Читаем выписку…'
+                      ? pdfProgress
+                        ? `Читаем PDF: ${pdfProgress.current} из ${pdfProgress.total}`
+                        : 'Читаем выписку…'
                       : source
                         ? source.fileName
                         : 'Выбрать выписку'}
                   </strong>
                   <span className="mt-2 max-w-md text-sm leading-relaxed text-muted-foreground">
-                    CSV, XLSX или PDF до 20 МБ. Файл разбирается прямо на вашем
+                    CSV, XLSX или PDF до 50 МБ. Файл разбирается прямо на вашем
                     устройстве.
                   </span>
                   <span className="mt-4 rounded-xl bg-primary px-4 py-3 text-sm font-semibold text-primary-foreground">
@@ -487,16 +509,29 @@ export default function ImportPage() {
                     type="file"
                     accept=".csv,.xlsx,.pdf,text/csv,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,application/pdf"
                     className="sr-only"
-                    disabled={reading || saving || categoriesLoading || Boolean(categoriesError)}
+                    disabled={
+                      reading ||
+                      saving ||
+                      categoriesLoading ||
+                      Boolean(categoriesError)
+                    }
                     onChange={(event: ChangeEvent<HTMLInputElement>) =>
                       void handleFile(event.target.files?.[0])
                     }
                   />
                 </label>
                 {categoriesError && (
-                  <div className="mt-3 flex flex-wrap items-center gap-3 rounded-xl border border-destructive/30 bg-destructive/10 p-3 text-sm text-destructive" role="alert">
+                  <div
+                    className="mt-3 flex flex-wrap items-center gap-3 rounded-xl border border-destructive/30 bg-destructive/10 p-3 text-sm text-destructive"
+                    role="alert"
+                  >
                     <span>{categoriesError} Импорт временно недоступен.</span>
-                    <Button type="button" variant="outline" onClick={() => void refreshCategories()} className="min-h-11 cursor-pointer">
+                    <Button
+                      type="button"
+                      variant="outline"
+                      onClick={() => void refreshCategories()}
+                      className="min-h-11 cursor-pointer"
+                    >
                       Повторить
                     </Button>
                   </div>
@@ -561,7 +596,12 @@ export default function ImportPage() {
                         const nextAccountName = event.target.value;
                         setAccountName(nextAccountName);
                         if (source && bank) {
-                          rebuildPreview(source, bank, mapping, nextAccountName);
+                          rebuildPreview(
+                            source,
+                            bank,
+                            mapping,
+                            nextAccountName,
+                          );
                         }
                       }}
                       className="h-12 rounded-xl text-base md:text-base"
@@ -664,6 +704,9 @@ export default function ImportPage() {
 
             {preview && !result && (
               <>
+                {preview.pdfDiagnostics && (
+                  <PdfDiagnosticsPanel diagnostics={preview.pdfDiagnostics} />
+                )}
                 {pdfNeedsReview && (
                   <div
                     aria-live="polite"
@@ -672,16 +715,21 @@ export default function ImportPage() {
                     <p className="font-semibold">PDF распознан частично</p>
                     {Boolean(preview.pdfUnrecognizedLineCount) && (
                       <p className="mt-1">
-                        Текстовых фрагментов без даты и суммы: {preview.pdfUnrecognizedLineCount}. Они могли быть служебным текстом или продолжением операции и не включены в импорт.
+                        Текстовых фрагментов без даты и суммы:{' '}
+                        {preview.pdfUnrecognizedLineCount}. Они могли быть
+                        служебным текстом или продолжением операции и не
+                        включены в импорт.
                       </p>
                     )}
                     {preview.counts.error > 0 && (
                       <p className="mt-1">
-                        Строк с неполными данными: {preview.counts.error}. Они отмечены как ошибки и не будут сохранены.
+                        Строк с неполными данными: {preview.counts.error}. Они
+                        отмечены как ошибки и не будут сохранены.
                       </p>
                     )}
                     <p className="mt-1">
-                      Сверьте число операций и итоговые суммы с выпиской; при расхождении используйте CSV или XLSX.
+                      Сверьте число операций и итоговые суммы с выпиской; при
+                      расхождении используйте CSV или XLSX.
                     </p>
                   </div>
                 )}
@@ -690,23 +738,40 @@ export default function ImportPage() {
                   categories={categories}
                   rowsToSave={rowsToSave.length}
                   visibleRows={visibleRows}
+                  showOnlyAttention={showOnlyAttention}
                   onShowMore={() => setVisibleRows((current) => current + 30)}
+                  onToggleAttention={() => {
+                    setShowOnlyAttention((current) => !current);
+                    setVisibleRows(30);
+                  }}
                   onUpdateRow={updateRow}
                   onSelectAll={selectImportable}
                 />
                 {ruleSuggestion && (
                   <div className="rounded-2xl border border-primary/20 bg-primary/[.06] p-4">
                     <p className="text-sm font-medium">
-                      Всегда относить операции «{ruleSuggestion.merchant}» к категории «{ruleSuggestion.category}»?
+                      Всегда относить операции «{ruleSuggestion.merchant}» к
+                      категории «{ruleSuggestion.category}»?
                     </p>
                     <p className="mt-1 text-xs text-muted-foreground">
-                      Текущая строка уже изменена. Правило применится к следующим импортам.
+                      Текущая строка уже изменена. Правило применится к
+                      следующим импортам.
                     </p>
                     <div className="mt-3 flex flex-wrap gap-2">
-                      <Button type="button" disabled={savingRule} onClick={() => void saveSuggestedRule()} className="min-h-11 cursor-pointer">
+                      <Button
+                        type="button"
+                        disabled={savingRule}
+                        onClick={() => void saveSuggestedRule()}
+                        className="min-h-11 cursor-pointer"
+                      >
                         Создать правило
                       </Button>
-                      <Button type="button" variant="ghost" onClick={() => setRuleSuggestion(null)} className="min-h-11 cursor-pointer">
+                      <Button
+                        type="button"
+                        variant="ghost"
+                        onClick={() => setRuleSuggestion(null)}
+                        className="min-h-11 cursor-pointer"
+                      >
                         Не сейчас
                       </Button>
                     </div>
@@ -769,28 +834,40 @@ export default function ImportPage() {
               )}
               {preview && (
                 <div className="mt-5 border-t pt-5">
-                  <p className="text-sm font-semibold">Итоги выбранных операций</p>
+                  <p className="text-sm font-semibold">
+                    Итоги выбранных операций
+                  </p>
                   <dl className="mt-3 space-y-3 text-sm">
                     <div className="flex items-start justify-between gap-3">
                       <dt className="text-muted-foreground">Банк</dt>
-                      <dd className="text-right font-medium">{bank ? bankNames[bank] : 'Не выбран'}</dd>
+                      <dd className="text-right font-medium">
+                        {bank ? bankNames[bank] : 'Не выбран'}
+                      </dd>
                     </div>
                     <div className="flex items-start justify-between gap-3">
                       <dt className="text-muted-foreground">Период</dt>
-                      <dd className="text-right font-medium">{previewSummary.period}</dd>
+                      <dd className="text-right font-medium">
+                        {previewSummary.period}
+                      </dd>
                     </div>
                     <div className="flex items-start justify-between gap-3">
                       <dt className="text-muted-foreground">Доходы</dt>
-                      <dd className="font-semibold text-emerald-700 dark:text-emerald-300">{formatRubles(previewSummary.income)}</dd>
+                      <dd className="font-semibold text-emerald-700 dark:text-emerald-300">
+                        {formatRubles(previewSummary.income)}
+                      </dd>
                     </div>
                     <div className="flex items-start justify-between gap-3">
                       <dt className="text-muted-foreground">Расходы</dt>
-                      <dd className="font-semibold">{formatRubles(previewSummary.expenses)}</dd>
+                      <dd className="font-semibold">
+                        {formatRubles(previewSummary.expenses)}
+                      </dd>
                     </div>
                     {previewSummary.transferCount > 0 && (
                       <div className="flex items-start justify-between gap-3">
                         <dt className="text-muted-foreground">Свои переводы</dt>
-                        <dd className="font-medium">{previewSummary.transferCount} · вне итогов</dd>
+                        <dd className="font-medium">
+                          {previewSummary.transferCount} · вне итогов
+                        </dd>
                       </div>
                     )}
                   </dl>
@@ -932,12 +1009,74 @@ function Metric({
   );
 }
 
+function PdfDiagnosticsPanel({
+  diagnostics,
+}: {
+  diagnostics: NonNullable<StatementPreview['pdfDiagnostics']>;
+}) {
+  const reliable = diagnostics.confidence === 'high';
+  return (
+    <section
+      className={`rounded-2xl border p-4 ${
+        reliable
+          ? 'border-emerald-500/30 bg-emerald-500/[.08]'
+          : 'border-amber-500/30 bg-amber-500/10'
+      }`}
+      aria-live="polite"
+    >
+      <div className="flex items-start gap-3">
+        {reliable ? (
+          <CheckCircle2
+            className="mt-0.5 size-5 shrink-0 text-emerald-600 dark:text-emerald-400"
+            aria-hidden="true"
+          />
+        ) : (
+          <AlertCircle
+            className="mt-0.5 size-5 shrink-0 text-amber-700 dark:text-amber-300"
+            aria-hidden="true"
+          />
+        )}
+        <div className="min-w-0 flex-1">
+          <p className="font-semibold">
+            {reliable
+              ? 'PDF проверен автоматически'
+              : 'Нужна точечная проверка'}
+          </p>
+          <p className="mt-1 text-sm leading-relaxed text-muted-foreground">
+            {diagnostics.templateLabel} · найдено{' '}
+            {diagnostics.recognizedRowCount} операций
+          </p>
+          <dl className="mt-3 grid gap-2 sm:grid-cols-2">
+            {diagnostics.checks.map((check) => (
+              <div
+                key={check.id}
+                className="flex min-h-11 items-center justify-between gap-3 rounded-xl bg-background/75 px-3 py-2 text-sm"
+              >
+                <dt className="min-w-0 text-muted-foreground">{check.label}</dt>
+                <dd className="shrink-0 text-right font-medium tabular-nums">
+                  {check.status === 'passed'
+                    ? 'Совпало'
+                    : check.status === 'unavailable'
+                      ? 'Нет итога'
+                      : `${formatRubles(check.actual ?? 0)} / ${formatRubles(check.expected ?? 0)}`}
+                </dd>
+              </div>
+            ))}
+          </dl>
+        </div>
+      </div>
+    </section>
+  );
+}
+
 function PreviewList({
   preview,
   categories,
   rowsToSave,
   visibleRows,
+  showOnlyAttention,
   onShowMore,
+  onToggleAttention,
   onUpdateRow,
   onSelectAll,
 }: {
@@ -945,20 +1084,40 @@ function PreviewList({
   categories: FinanceCategory[];
   rowsToSave: number;
   visibleRows: number;
+  showOnlyAttention: boolean;
   onShowMore: () => void;
+  onToggleAttention: () => void;
   onUpdateRow: (id: string, changes: Partial<ParsedImportRow>) => void;
   onSelectAll: (selected: boolean) => void;
 }) {
+  const attentionRows = preview.rows.filter(
+    (row) => row.status === 'review' || row.status === 'error',
+  );
+  const displayedRows = showOnlyAttention ? attentionRows : preview.rows;
   return (
     <div className="surface-card overflow-hidden rounded-3xl border">
       <div className="flex flex-col gap-3 border-b p-4 sm:flex-row sm:items-center sm:justify-between sm:px-5">
         <div>
-          <h3 className="font-semibold">Проверьте операции</h3>
+          <h3 className="font-semibold">Операции к импорту</h3>
           <p className="mt-1 text-sm text-muted-foreground">
-            {preview.rows.length} строк · выбрано {rowsToSave}
+            {showOnlyAttention
+              ? `${attentionRows.length} требуют внимания`
+              : `${preview.rows.length} строк`}{' '}
+            · выбрано {rowsToSave}
           </p>
         </div>
-        <div className="flex gap-2">
+        <div className="flex flex-wrap gap-2">
+          {attentionRows.length > 0 && (
+            <Button
+              variant="outline"
+              className="min-h-12 cursor-pointer"
+              onClick={onToggleAttention}
+            >
+              {showOnlyAttention
+                ? `Показать все ${preview.rows.length}`
+                : `Только проверить ${attentionRows.length}`}
+            </Button>
+          )}
           <Button
             variant="outline"
             className="min-h-12 cursor-pointer"
@@ -976,7 +1135,7 @@ function PreviewList({
         </div>
       </div>
       <div className="divide-y divide-border">
-        {preview.rows.slice(0, visibleRows).map((row) => (
+        {displayedRows.slice(0, visibleRows).map((row) => (
           <ImportRowCard
             key={row.id}
             row={row}
@@ -985,14 +1144,14 @@ function PreviewList({
           />
         ))}
       </div>
-      {visibleRows < preview.rows.length && (
+      {visibleRows < displayedRows.length && (
         <div className="border-t p-4 text-center">
           <Button
             variant="outline"
             className="min-h-12 cursor-pointer"
             onClick={onShowMore}
           >
-            Показать ещё {Math.min(30, preview.rows.length - visibleRows)}
+            Показать ещё {Math.min(30, displayedRows.length - visibleRows)}
           </Button>
         </div>
       )}
@@ -1164,7 +1323,9 @@ function SuccessPanel({
       <div className="mt-6 flex flex-col justify-center gap-3 sm:flex-row">
         <Link
           href="/transactions"
-          className={buttonVariants({ className: 'min-h-12 cursor-pointer px-5' })}
+          className={buttonVariants({
+            className: 'min-h-12 cursor-pointer px-5',
+          })}
         >
           Посмотреть операции
         </Link>

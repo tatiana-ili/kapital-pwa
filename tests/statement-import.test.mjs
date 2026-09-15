@@ -11,14 +11,48 @@ import {
 } from '../lib/local-finance-store.ts';
 import { loadStatementImportProfile } from '../lib/supabase/imports.ts';
 import { findTransferCounterpart } from '../features/import/transfers.ts';
-import { loadLocalFinanceData, updateLocalTransaction } from '../lib/local-finance-store.ts';
+import { parseKnownBankPdf } from '../features/import/pdf-layout.ts';
+import {
+  loadLocalFinanceData,
+  updateLocalTransaction,
+} from '../lib/local-finance-store.ts';
 import { demoAccounts } from '../lib/demo-data.ts';
 import {
+  createTransactionFingerprint,
   inspectStatementTable,
   parseAmount,
   parseDate,
   parseStatementTable,
 } from '../features/import/parser.ts';
+
+function pdfPage(pageNumber, rows) {
+  return {
+    pageNumber,
+    width: 595,
+    height: 842,
+    items: rows.flatMap(([y, cells]) =>
+      cells.map(([x, str]) => ({
+        str,
+        x,
+        y,
+        width: Math.max(10, str.length * 4),
+      })),
+    ),
+  };
+}
+
+function pdfSource(fileName, bankPdf) {
+  const inspection = inspectStatementTable(bankPdf.table, fileName);
+  inspection.detectedBank = bankPdf.bank;
+  return {
+    fileName,
+    fileFormat: 'pdf',
+    fileHash: `${bankPdf.bank}-pdf`,
+    table: bankPdf.table,
+    inspection,
+    pdfDiagnostics: bankPdf.diagnostics,
+  };
+}
 
 test('PDF module load failure offers a reload without exposing a chunk URL', () => {
   const cause = new Error(
@@ -66,8 +100,285 @@ test('PDF text fragments are counted separately while incomplete operations rema
   assert.equal(preview.pdfUnrecognizedLineCount, 3);
   assert.equal(preview.counts.new, 1);
   assert.equal(preview.counts.error, 1);
-  assert.deepEqual(preview.rows.map((row) => row.rowNumber), [2, 6]);
-  assert.deepEqual(preview.rows.map((row) => row.selected), [true, false]);
+  assert.deepEqual(
+    preview.rows.map((row) => row.rowNumber),
+    [2, 6],
+  );
+  assert.deepEqual(
+    preview.rows.map((row) => row.selected),
+    [true, false],
+  );
+});
+
+test('T-Bank PDF layout keeps wrapped descriptions and validates statement totals', () => {
+  const parsed = parseKnownBankPdf(
+    [
+      pdfPage(1, [
+        [
+          760,
+          [
+            [50, 'Т-Банк'],
+            [50, 'Справка о движении средств'],
+          ],
+        ],
+        [
+          730,
+          [
+            [50, 'Дата и время операции'],
+            [290, 'Сумма операции в валюте карты'],
+          ],
+        ],
+        [
+          700,
+          [
+            [50, '11.09.2026'],
+            [125, '11.09.2026'],
+            [200, '-100.00 ₽'],
+            [300, '-100.00 ₽'],
+            [395, 'Оплата в GLOBUS'],
+            [525, '1234'],
+          ],
+        ],
+        [
+          688,
+          [
+            [50, '10:15'],
+            [125, '10:16'],
+            [395, 'MOSCOW RUS'],
+          ],
+        ],
+        [
+          660,
+          [
+            [50, '10.09.2026'],
+            [125, '10.09.2026'],
+            [200, '+250.00 ₽'],
+            [300, '+250.00 ₽'],
+            [395, 'Пополнение. Система быстрых платежей'],
+            [525, '1234'],
+          ],
+        ],
+        [
+          648,
+          [
+            [50, '09:30'],
+            [125, '09:30'],
+          ],
+        ],
+        [
+          100,
+          [
+            [50, 'Пополнения:'],
+            [125, '250.00 ₽'],
+          ],
+        ],
+        [
+          86,
+          [
+            [50, 'Расходы:'],
+            [125, '100.00 ₽'],
+          ],
+        ],
+      ]),
+    ],
+    'Справка_ТБанк.pdf',
+  );
+
+  assert.equal(parsed.bank, 'tbank');
+  assert.equal(parsed.table.length, 3);
+  assert.equal(parsed.table[1][2], -100);
+  assert.equal(parsed.table[1][3], 'GLOBUS MOSCOW RUS');
+  assert.equal(parsed.diagnostics.confidence, 'high');
+  assert.ok(
+    parsed.diagnostics.checks.every((check) => check.status === 'passed'),
+  );
+});
+
+test('Yandex PDF layout uses contract currency and auto-confirms exact own-account transfers', () => {
+  const parsed = parseKnownBankPdf(
+    [
+      pdfPage(1, [
+        [780, [[20, 'Яндекс Банк']]],
+        [
+          750,
+          [[20, 'Выписка по Договору за период с 01.01.2026 по 02.01.2026']],
+        ],
+        [
+          730,
+          [
+            [20, 'Входящий остаток на 01.01.2026'],
+            [520, '100,00 ₽'],
+          ],
+        ],
+        [
+          710,
+          [
+            [20, 'Описание операции'],
+            [205, 'Дата и время операции МСК'],
+          ],
+        ],
+        [
+          680,
+          [
+            [20, 'Оплата товаров и услуг VKUSVILL'],
+            [205, '01.01.2026'],
+            [295, '01.01.2026'],
+            [420, '-40,00 ₽'],
+            [520, '-40,00 ₽'],
+          ],
+        ],
+        [668, [[205, 'в 12:45']]],
+        [
+          640,
+          [
+            [20, 'Перевод между счетами одного клиента'],
+            [205, '02.01.2026'],
+            [295, '02.01.2026'],
+            [420, '+10,00 ₽'],
+            [520, '+10,00 ₽'],
+          ],
+        ],
+        [628, [[205, 'в 09:10']]],
+        [
+          590,
+          [
+            [20, 'Исходящий остаток за 02.01.2026'],
+            [520, '70,00 ₽'],
+          ],
+        ],
+        [
+          570,
+          [
+            [20, 'Всего расходных операций'],
+            [520, '-40,00 ₽'],
+          ],
+        ],
+        [
+          550,
+          [
+            [20, 'Всего приходных операций'],
+            [520, '+10,00 ₽'],
+          ],
+        ],
+      ]),
+    ],
+    'Выписка_ЯндексБанк.pdf',
+  );
+  const source = pdfSource('Выписка_ЯндексБанк.pdf', parsed);
+  const preview = parseStatementTable({
+    bank: 'yandex',
+    accountName: 'Яндекс Банк · Основной',
+    source,
+  });
+
+  assert.equal(parsed.table[1][2], -40);
+  assert.equal(parsed.table[1][3], 'VKUSVILL');
+  assert.equal(parsed.diagnostics.confidence, 'high');
+  assert.equal(preview.rows[1].isTransfer, true);
+  assert.equal(preview.rows[1].status, 'new');
+  assert.equal(preview.rows[1].selected, true);
+  assert.match(preview.rows[0].sourceHash, /^v3-/);
+});
+
+test('Sber PDF layout treats unsigned debits as expenses and verifies both totals', () => {
+  const parsed = parseKnownBankPdf(
+    [
+      pdfPage(1, [
+        [
+          780,
+          [
+            [45, 'СБЕР'],
+            [45, 'Индивидуальная выписка по платёжному счёту'],
+          ],
+        ],
+        [
+          750,
+          [
+            [45, 'Дата операции (МСК)'],
+            [145, 'Категория'],
+            [470, 'Сумма в валюте счёта'],
+          ],
+        ],
+        [
+          700,
+          [
+            [45, '10.09.2026 04:09'],
+            [145, 'Прочие расходы'],
+            [500, '5 000,00'],
+          ],
+        ],
+        [
+          688,
+          [
+            [45, '10.09.2026'],
+            [145, 'Автоплатёж дом интернет. Операция по карте'],
+          ],
+        ],
+        [
+          650,
+          [
+            [45, '09.09.2026 08:00'],
+            [145, 'Прочие операции'],
+            [500, '+1 000,00'],
+          ],
+        ],
+        [
+          638,
+          [
+            [45, '09.09.2026'],
+            [145, 'Заработная плата. Операция по счёту'],
+          ],
+        ],
+        [
+          120,
+          [
+            [350, 'Пополнение'],
+            [500, '+1 000,00'],
+          ],
+        ],
+        [
+          106,
+          [
+            [350, 'Списание'],
+            [500, '5 000,00'],
+          ],
+        ],
+      ]),
+    ],
+    'Выписка_Сбер.pdf',
+  );
+
+  assert.equal(parsed.bank, 'sber');
+  assert.equal(parsed.table[1][2], -5000);
+  assert.equal(parsed.table[2][2], 1000);
+  assert.equal(parsed.diagnostics.confidence, 'high');
+  assert.ok(
+    parsed.diagnostics.checks.every((check) => check.status === 'passed'),
+  );
+});
+
+test('PDF source references distinguish same-day repeated purchases without changing legacy hashes', () => {
+  const common = {
+    bank: 'tbank',
+    accountName: 'Основной',
+    date: '2026-09-11',
+    amount: -100,
+    merchant: 'Кофейня',
+    description: 'Оплата в кофейне',
+  };
+  const legacy = createTransactionFingerprint(common);
+  const first = createTransactionFingerprint({
+    ...common,
+    sourceReference: '10:00',
+  });
+  const second = createTransactionFingerprint({
+    ...common,
+    sourceReference: '18:00',
+  });
+
+  assert.match(legacy, /^v2-/);
+  assert.match(first, /^v3-/);
+  assert.notEqual(first, second);
 });
 
 test('CSV reader keeps quoted delimiters and detects statement columns', () => {
@@ -101,7 +412,7 @@ test('selected CSV file is read locally and receives a stable file hash', async 
   assert.equal(source.table.length, 2);
 });
 
-test('statement parser normalizes amounts, marks transfer review and finds duplicates', () => {
+test('statement parser normalizes amounts, recognizes an internal transfer and finds duplicates', () => {
   const table = parseCsv(
     [
       'Дата;Сумма;Магазин;Описание',
@@ -127,16 +438,37 @@ test('statement parser normalizes amounts, marks transfer review and finds dupli
   assert.equal(preview.rows[0].amount, -2450.5);
   assert.equal(preview.rows[0].category, 'Продукты');
   assert.equal(preview.rows[0].status, 'new');
-  assert.equal(preview.rows[1].status, 'review');
-  assert.equal(preview.rows[1].isTransfer, false);
-  assert.equal(preview.rows[1].selected, false);
+  assert.equal(preview.rows[1].status, 'new');
+  assert.equal(preview.rows[1].isTransfer, true);
+  assert.equal(preview.rows[1].selected, true);
   assert.equal(preview.rows[2].status, 'duplicate');
   assert.deepEqual(preview.counts, {
-    new: 1,
+    new: 2,
     duplicate: 1,
-    review: 1,
+    review: 0,
     error: 0,
   });
+});
+
+test('an ordinary transfer to another bank does not require manual review', () => {
+  const table = parseCsv(
+    'Дата;Сумма;Магазин;Описание\n10.09.2026;-5000;Перевод на карту другого банка;Получатель',
+  );
+  const preview = parseStatementTable({
+    bank: 'tbank',
+    accountName: 'Основной',
+    source: {
+      fileName: 'tbank.csv',
+      fileFormat: 'csv',
+      fileHash: 'external-transfer',
+      table,
+      inspection: inspectStatementTable(table, 'tbank.csv'),
+    },
+  });
+
+  assert.equal(preview.rows[0].status, 'new');
+  assert.equal(preview.rows[0].isTransfer, false);
+  assert.equal(preview.rows[0].selected, true);
 });
 
 test('date and number parsers reject invalid values', () => {
@@ -304,10 +636,7 @@ test('demo imports retain a validated column profile for the next statement', ()
       loadLocalImportProfile('tbank', 'csv', 'test-header-signature', 3),
       undefined,
     );
-    assert.equal(
-      parseStoredMapping({ date: 0, amount: 99 }, 3),
-      undefined,
-    );
+    assert.equal(parseStoredMapping({ date: 0, amount: 99 }, 3), undefined);
   } finally {
     if (previousWindow === undefined) delete globalThis.window;
     else globalThis.window = previousWindow;
@@ -396,7 +725,10 @@ test('a later import of the same file can add a deferred review row', () => {
     });
     const retry = saveLocalStatement({
       ...base,
-      rows: [row('v2-first', false, 'duplicate'), row('v2-review', true, 'review')],
+      rows: [
+        row('v2-first', false, 'duplicate'),
+        row('v2-review', true, 'review'),
+      ],
     });
     const repeated = saveLocalStatement({
       ...base,
@@ -498,7 +830,9 @@ test('transfer matcher requires a unique cross-account counterpart', () => {
     undefined,
   );
   assert.equal(
-    findTransferCounterpart(incoming, [{ ...outgoing, accountId: 'new-account' }]),
+    findTransferCounterpart(incoming, [
+      { ...outgoing, accountId: 'new-account' },
+    ]),
     undefined,
   );
   assert.equal(
@@ -508,6 +842,39 @@ test('transfer matcher requires a unique cross-account counterpart', () => {
     ),
     undefined,
   );
+});
+
+test('a unique opposite-side transfer is imported without manual confirmation', () => {
+  const table = parseCsv(
+    'Дата;Сумма;Магазин;Описание\n11.09.2026;5000;Пополнение счёта;СБП',
+  );
+  const source = {
+    fileName: 'tbank.csv',
+    fileFormat: 'csv',
+    fileHash: 'incoming-transfer',
+    table,
+    inspection: inspectStatementTable(table, 'tbank.csv'),
+  };
+  const preview = parseStatementTable({
+    bank: 'tbank',
+    accountName: 'Новый счёт',
+    existingAccountId: 'new-account',
+    source,
+    existingTransactions: [
+      {
+        id: 'outgoing',
+        accountId: 'old-account',
+        date: '2026-09-10',
+        amount: -5000,
+        merchant: 'Перевод между счетами',
+        description: 'СБП',
+      },
+    ],
+  });
+
+  assert.equal(preview.rows[0].isTransfer, true);
+  assert.equal(preview.rows[0].status, 'new');
+  assert.equal(preview.rows[0].selected, true);
 });
 
 test('confirmed demo transfers link both sides and unlink together', () => {
@@ -530,7 +897,11 @@ test('confirmed demo transfers link both sides and unlink together', () => {
       merchant,
       description: 'СБП между своими счетами',
       category: 'Переводы',
-      transactionType: isTransfer ? 'transfer' : amount > 0 ? 'income' : 'expense',
+      transactionType: isTransfer
+        ? 'transfer'
+        : amount > 0
+          ? 'income'
+          : 'expense',
       isTransfer,
       excludedFromAnalytics: isTransfer,
       sourceHash,
@@ -549,10 +920,20 @@ test('confirmed demo transfers link both sides and unlink together', () => {
       rows: [transaction],
     });
     saveLocalStatement(
-      input('tbank', 'Основной', 'out-file', row('v2-out', -5000, 'Перевод', false)),
+      input(
+        'tbank',
+        'Основной',
+        'out-file',
+        row('v2-out', -5000, 'Перевод', false),
+      ),
     );
     saveLocalStatement(
-      input('sber', 'Основной', 'in-file', row('v2-in', 5000, 'Пополнение счёта', true)),
+      input(
+        'sber',
+        'Основной',
+        'in-file',
+        row('v2-in', 5000, 'Пополнение счёта', true),
+      ),
     );
 
     const linked = loadLocalFinanceData().transactions;

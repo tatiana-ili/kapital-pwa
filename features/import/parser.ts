@@ -13,7 +13,10 @@ import type {
   StatementPreview,
   StatementTable,
 } from './types.ts';
-import { findTransferCounterpart, looksLikeTransfer } from './transfers.ts';
+import {
+  findTransferCounterpart,
+  isDefiniteInternalTransfer,
+} from './transfers.ts';
 import { defaultCategories } from '../categories/defaults.ts';
 import { applyCategoryRules } from '../categories/rules.ts';
 
@@ -57,6 +60,7 @@ const columnAliases: Record<ImportColumnKey, RegExp[]> = {
   ],
   currency: [/^валюта$/, /валюта операции/, /^currency$/],
   balance: [/^остаток/, /баланс после/, /^balance/],
+  sourceReference: [/^идентификатор операции$/, /^source reference$/],
 };
 
 const bankMatchers: Array<[BankCode, RegExp[]]> = [
@@ -209,7 +213,7 @@ export function parseStatementTable({
 
   const existingHashes = new Set(
     existingTransactions.flatMap((transaction) => {
-      if (transaction.sourceHash?.startsWith('v2-')) {
+      if (/^v[23]-/.test(transaction.sourceHash ?? '')) {
         return [transaction.sourceHash];
       }
       return [];
@@ -232,8 +236,9 @@ export function parseStatementTable({
   }
   const seenHashes = new Set<string>();
   const rows: ParsedImportRow[] = [];
-  let endingBalance: number | undefined;
-  let pdfUnrecognizedLineCount = 0;
+  let endingBalance = source.pdfDiagnostics?.endingBalance;
+  let pdfUnrecognizedLineCount =
+    source.pdfDiagnostics?.unrecognizedOperationLineCount ?? 0;
 
   source.table
     .slice(source.inspection.headerRowIndex + 1)
@@ -244,6 +249,9 @@ export function parseStatementTable({
       const date = parseDate(readMapped(rawRow, mapping.date));
       const postedDate = parseDate(readMapped(rawRow, mapping.postedDate));
       const amount = parseMappedAmount(rawRow, mapping);
+      const sourceReference = normalizeCell(
+        readMapped(rawRow, mapping.sourceReference),
+      );
       if (
         source.fileFormat === 'pdf' &&
         !date &&
@@ -291,15 +299,25 @@ export function parseStatementTable({
         },
         existingTransactions,
       );
+      const definiteInternalTransfer =
+        isDefiniteInternalTransfer(bank, combinedText) ||
+        Boolean(transferCounterpart);
       const suggestedTransfer =
-        looksLikeTransfer(combinedText) || Boolean(transferCounterpart);
-      const transactionType = inferTransactionType(safeAmount, combinedText);
-      const category = applyCategoryRules(
-        { merchant, description, amount: safeAmount },
-        inferCategory(safeAmount, combinedText, transactionType),
-        categories,
-        userCategoryRules,
-      );
+        !definiteInternalTransfer &&
+        /перевод (?:себе|между.*сч[её]т)|внутренний перевод/i.test(
+          combinedText,
+        );
+      const transactionType = definiteInternalTransfer
+        ? 'transfer'
+        : inferTransactionType(safeAmount, combinedText);
+      const category = definiteInternalTransfer
+        ? 'Переводы'
+        : applyCategoryRules(
+            { merchant, description, amount: safeAmount },
+            inferCategory(safeAmount, combinedText, transactionType),
+            categories,
+            userCategoryRules,
+          );
       const sourceHash = createTransactionFingerprint({
         bank,
         accountName,
@@ -307,9 +325,22 @@ export function parseStatementTable({
         amount: safeAmount,
         merchant,
         description,
+        sourceReference,
       });
+      const legacySourceHash = sourceReference
+        ? createTransactionFingerprint({
+            bank,
+            accountName,
+            date: safeDate,
+            amount: safeAmount,
+            merchant,
+            description,
+          })
+        : sourceHash;
       const duplicate =
-        existingHashes.has(sourceHash) || seenHashes.has(sourceHash);
+        existingHashes.has(sourceHash) ||
+        existingHashes.has(legacySourceHash) ||
+        seenHashes.has(sourceHash);
 
       let status: ParsedImportRow['status'] = 'new';
       if (issues.length) status = 'error';
@@ -335,8 +366,8 @@ export function parseStatementTable({
         description,
         category,
         transactionType,
-        isTransfer: false,
-        excludedFromAnalytics: false,
+        isTransfer: definiteInternalTransfer,
+        excludedFromAnalytics: definiteInternalTransfer,
         sourceHash,
         status,
         issues,
@@ -362,6 +393,7 @@ export function parseStatementTable({
     rows,
     endingBalance,
     pdfUnrecognizedLineCount,
+    pdfDiagnostics: source.pdfDiagnostics,
     counts: {
       new: rows.filter((row) => row.status === 'new').length,
       duplicate: rows.filter((row) => row.status === 'duplicate').length,
@@ -395,7 +427,12 @@ function readMapped(row: StatementCell[], index?: number) {
 function parseMappedAmount(row: StatementCell[], mapping: ColumnMapping) {
   const expense = parseAmount(readMapped(row, mapping.expense));
   const income = parseAmount(readMapped(row, mapping.income));
-  if (income !== undefined && income !== 0 && expense !== undefined && expense !== 0) {
+  if (
+    income !== undefined &&
+    income !== 0 &&
+    expense !== undefined &&
+    expense !== 0
+  ) {
     return undefined;
   }
   if (income !== undefined && income !== 0) return Math.abs(income);
@@ -500,6 +537,7 @@ export function createTransactionFingerprint(input: {
   amount: number;
   merchant: string;
   description: string;
+  sourceReference?: string;
 }) {
   const normalized = [
     input.bank,
@@ -508,8 +546,13 @@ export function createTransactionFingerprint(input: {
     input.amount.toFixed(2),
     normalizeFingerprintText(input.merchant),
     normalizeFingerprintText(input.description),
-  ].join('|');
-  return `v2-${stableHash(normalized)}`;
+    input.sourceReference
+      ? normalizeFingerprintText(input.sourceReference)
+      : undefined,
+  ]
+    .filter((value): value is string => value !== undefined)
+    .join('|');
+  return `${input.sourceReference ? 'v3' : 'v2'}-${stableHash(normalized)}`;
 }
 
 function normalizeFingerprintText(value: string) {
