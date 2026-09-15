@@ -89,6 +89,7 @@ function parseTbankPdf(pages: PdfTextPage[]): KnownPdfResult {
 
   for (const page of pages) {
     const lines = groupLines(page.items);
+    const descriptionRange = tbankDescriptionRange(page);
     let current:
       | {
           date: string[];
@@ -144,8 +145,10 @@ function parseTbankPdf(pages: PdfTextPage[]): KnownPdfResult {
           postedDate: [cellText(page, line, 0.205, 0.325)],
           amount,
           operationAmount,
-          description: [cellText(page, line, 0.66, 0.875)],
-          card: [cellText(page, line, 0.875, 1)],
+          description: [
+            cellText(page, line, descriptionRange.start, descriptionRange.end),
+          ],
+          card: [cellText(page, line, descriptionRange.end, 1)],
           lastY: line.y,
         };
         continue;
@@ -154,8 +157,10 @@ function parseTbankPdf(pages: PdfTextPage[]): KnownPdfResult {
       if (current && current.lastY - line.y <= 19) {
         current.date.push(date);
         current.postedDate.push(cellText(page, line, 0.205, 0.325));
-        current.description.push(cellText(page, line, 0.66, 0.875));
-        current.card.push(cellText(page, line, 0.875, 1));
+        current.description.push(
+          cellText(page, line, descriptionRange.start, descriptionRange.end),
+        );
+        current.card.push(cellText(page, line, descriptionRange.end, 1));
         current.lastY = line.y;
       } else {
         flush();
@@ -174,6 +179,27 @@ function parseTbankPdf(pages: PdfTextPage[]): KnownPdfResult {
     checks,
     unrecognized,
   );
+}
+
+function tbankDescriptionRange(page: PdfTextPage) {
+  const descriptionHeader = page.items.find((item) =>
+    /^(?:описание|описание операции|description)$/i.test(
+      normalizeText(item.str),
+    ),
+  );
+  const cardHeader = page.items.find((item) =>
+    /^(?:номер карты|номер|card number)$/i.test(normalizeText(item.str)),
+  );
+  const start = Math.max(
+    0.6,
+    descriptionHeader ? descriptionHeader.x / page.width - 0.005 : 0.64,
+  );
+  const end = Math.min(
+    0.9,
+    cardHeader ? cardHeader.x / page.width - 0.005 : 0.835,
+  );
+
+  return end > start ? { start, end } : { start: 0.64, end: 0.835 };
 }
 
 function parseYandexPdf(pages: PdfTextPage[]): KnownPdfResult {

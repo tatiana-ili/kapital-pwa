@@ -11,6 +11,7 @@ import {
   Download,
   FileCheck2,
   FileSpreadsheet,
+  Layers3,
   LockKeyhole,
   RotateCcw,
   ShieldCheck,
@@ -18,7 +19,10 @@ import {
 } from 'lucide-react';
 import { AppShell } from '@/components/app-shell';
 import { categoriesForAmount } from '@/features/categories/defaults';
-import type { FinanceCategory } from '@/features/categories/types';
+import type {
+  CategoryRule,
+  FinanceCategory,
+} from '@/features/categories/types';
 import { Badge } from '@/components/ui/badge';
 import { Button, buttonVariants } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -28,7 +32,13 @@ import type { StatementCommitResult } from '@/features/import/commit-types';
 import {
   bankStatementParsers,
   inferBankMapping,
+  mergeStoredBankMapping,
 } from '@/features/import/banks';
+import {
+  descriptionRuleValue,
+  groupRepeatedDescriptions,
+  type RepeatedDescriptionGroup,
+} from '@/features/import/description-groups';
 import { readStatementFile } from '@/features/import/file-reader';
 import { describeStatementReadError } from '@/features/import/read-error';
 import { inspectStatementTable, parseAmount } from '@/features/import/parser';
@@ -73,6 +83,13 @@ const mappingFields: Array<{
   { key: 'balance', label: 'Остаток после операции' },
 ];
 
+type PendingDescriptionRule = {
+  key: string;
+  description: string;
+  category: string;
+  direction: 'expense' | 'income';
+};
+
 export default function ImportPage() {
   const { accounts, client, dataMode, transactions } = useFinanceData();
   const {
@@ -108,6 +125,10 @@ export default function ImportPage() {
     direction: 'expense' | 'income';
   } | null>(null);
   const [savingRule, setSavingRule] = useState(false);
+  const [savingDescriptionRules, setSavingDescriptionRules] = useState(false);
+  const [pendingDescriptionRules, setPendingDescriptionRules] = useState<
+    Record<string, PendingDescriptionRule>
+  >({});
   const [ruleMessage, setRuleMessage] = useState('');
 
   const rowsToSave = useMemo(
@@ -135,6 +156,10 @@ export default function ImportPage() {
         : 'Нет выбранных операций',
     };
   }, [rowsToSave]);
+  const descriptionGroups = useMemo(
+    () => groupRepeatedDescriptions(preview?.rows ?? []),
+    [preview],
+  );
   const pdfNeedsReview =
     preview?.fileFormat === 'pdf' &&
     (Boolean(preview.pdfUnrecognizedLineCount) ||
@@ -172,7 +197,12 @@ export default function ImportPage() {
             nextSource.inspection.headerSignature,
             nextSource.inspection.headers.length,
           );
-      return stored ?? inferred;
+      return mergeStoredBankMapping(
+        nextBank,
+        nextSource.inspection.headers,
+        inferred,
+        stored ?? undefined,
+      );
     } catch {
       return inferred;
     }
@@ -228,6 +258,7 @@ export default function ImportPage() {
     setResult(null);
     setPreview(null);
     setRuleSuggestion(null);
+    setPendingDescriptionRules({});
     setRuleMessage('');
     setVisibleRows(30);
     try {
@@ -266,6 +297,7 @@ export default function ImportPage() {
   async function changeBank(nextBank: BankCode | '') {
     setBank(nextBank);
     setPreview(null);
+    setPendingDescriptionRules({});
     const nextAccountName =
       nextBank && (!accountName || accountName.includes('· Основной'))
         ? `${bankNames[nextBank]} · Основной`
@@ -284,6 +316,7 @@ export default function ImportPage() {
     if (value === '') delete nextMapping[key];
     else nextMapping[key] = Number(value);
     setMapping(nextMapping);
+    setPendingDescriptionRules({});
     if (source && bank) rebuildPreview(source, bank, nextMapping, accountName);
   }
 
@@ -318,6 +351,73 @@ export default function ImportPage() {
           }
         : current,
     );
+  }
+
+  function updateDescriptionGroup(
+    group: RepeatedDescriptionGroup,
+    category: string,
+  ) {
+    const rowIds = new Set(group.rowIds);
+    setPreview((current) =>
+      current
+        ? {
+            ...current,
+            rows: current.rows.map((row) =>
+              rowIds.has(row.id) ? { ...row, category } : row,
+            ),
+          }
+        : current,
+    );
+    setPendingDescriptionRules((current) => ({
+      ...current,
+      [group.key]: {
+        key: group.key,
+        description: descriptionRuleValue(group.description),
+        category,
+        direction: group.direction,
+      },
+    }));
+    setRuleSuggestion(null);
+    setRuleMessage('');
+  }
+
+  async function persistDescriptionRules() {
+    const pending = Object.values(pendingDescriptionRules);
+    if (!pending.length) return true;
+    setSavingDescriptionRules(true);
+    const savedKeys: string[] = [];
+    try {
+      for (const rule of pending) {
+        const saved = await createRule(
+          'description',
+          rule.description,
+          rule.category,
+          rule.direction,
+        );
+        if (!saved) {
+          setPendingDescriptionRules((current) =>
+            Object.fromEntries(
+              Object.entries(current).filter(
+                ([key]) => !savedKeys.includes(key),
+              ),
+            ),
+          );
+          setError(
+            'Не удалось сохранить все правила описаний. Уже сохранённые правила останутся активными.',
+          );
+          return false;
+        }
+        savedKeys.push(rule.key);
+      }
+      setPendingDescriptionRules({});
+      setRuleMessage(
+        `Сохранено правил по повторяющимся описаниям: ${pending.length}. Они применятся при следующих импортах.`,
+      );
+      setError('');
+      return true;
+    } finally {
+      setSavingDescriptionRules(false);
+    }
   }
 
   async function saveSuggestedRule() {
@@ -361,6 +461,7 @@ export default function ImportPage() {
     setSaving(true);
     setError('');
     try {
+      if (!(await persistDescriptionRules())) return;
       const input = {
         bank,
         accountName:
@@ -401,6 +502,7 @@ export default function ImportPage() {
     setSource(null);
     setPreview(null);
     setRuleSuggestion(null);
+    setPendingDescriptionRules({});
     setRuleMessage('');
     setResult(null);
     setError('');
@@ -733,6 +835,17 @@ export default function ImportPage() {
                     </p>
                   </div>
                 )}
+                {descriptionGroups.length > 0 && (
+                  <GroupedDescriptionsPanel
+                    groups={descriptionGroups}
+                    categories={categories}
+                    rules={categoryRules}
+                    pendingRules={pendingDescriptionRules}
+                    saving={savingDescriptionRules}
+                    onChange={updateDescriptionGroup}
+                    onSave={() => void persistDescriptionRules()}
+                  />
+                )}
                 <PreviewList
                   preview={preview}
                   categories={categories}
@@ -803,7 +916,7 @@ export default function ImportPage() {
                 <div>
                   <p className="font-semibold">Что будет импортировано</p>
                   <p className="text-sm text-muted-foreground">
-                    Только подтверждённые строки
+                    Новые строки выбраны автоматически
                   </p>
                 </div>
               </div>
@@ -906,6 +1019,7 @@ export default function ImportPage() {
                   className="mt-5 min-h-12 w-full cursor-pointer text-base"
                   disabled={
                     saving ||
+                    savingDescriptionRules ||
                     categoriesLoading ||
                     Boolean(categoriesError) ||
                     !rowsToSave.length ||
@@ -1069,6 +1183,169 @@ function PdfDiagnosticsPanel({
   );
 }
 
+function GroupedDescriptionsPanel({
+  groups,
+  categories,
+  rules,
+  pendingRules,
+  saving,
+  onChange,
+  onSave,
+}: {
+  groups: RepeatedDescriptionGroup[];
+  categories: FinanceCategory[];
+  rules: CategoryRule[];
+  pendingRules: Record<string, PendingDescriptionRule>;
+  saving: boolean;
+  onChange: (group: RepeatedDescriptionGroup, category: string) => void;
+  onSave: () => void;
+}) {
+  const [visibleGroups, setVisibleGroups] = useState(8);
+  const groupsWithoutRule = groups.filter(
+    (group) => !findDescriptionRule(group, rules),
+  );
+  const coveredCount = groups.length - groupsWithoutRule.length;
+  const pendingCount = Object.keys(pendingRules).length;
+
+  return (
+    <section className="surface-card overflow-hidden rounded-3xl border">
+      <div className="flex items-start gap-3 border-b p-4 sm:p-5">
+        <span className="grid size-11 shrink-0 place-items-center rounded-2xl bg-primary/10 text-primary">
+          <Layers3 className="size-5" aria-hidden="true" />
+        </span>
+        <div className="min-w-0 flex-1">
+          <div className="flex flex-wrap items-center gap-2">
+            <h3 className="font-semibold">Повторяющиеся описания</h3>
+            <Badge variant="secondary">{groups.length}</Badge>
+          </div>
+          <p className="mt-1 text-sm leading-relaxed text-muted-foreground">
+            Выберите категорию один раз — она применится ко всей группе. Правило
+            по описанию сохранится для следующих импортов.
+          </p>
+        </div>
+      </div>
+
+      {groupsWithoutRule.length > 0 ? (
+        <>
+          <div className="divide-y divide-border">
+            {groupsWithoutRule.slice(0, visibleGroups).map((group, index) => {
+              const pending = pendingRules[group.key];
+              const selectId = `description-group-${index}`;
+              return (
+                <div
+                  key={group.key}
+                  className="grid gap-3 p-4 sm:grid-cols-[minmax(0,1fr)_16rem] sm:items-center sm:px-5"
+                >
+                  <div className="min-w-0">
+                    <p className="break-words text-sm font-medium sm:text-base">
+                      {group.description}
+                    </p>
+                    <p className="mt-1 text-xs text-muted-foreground sm:text-sm">
+                      {group.count} операций · {formatRubles(group.totalAmount)}
+                      {group.currentCategory
+                        ? ` · сейчас «${group.currentCategory}»`
+                        : ' · категории различаются'}
+                    </p>
+                  </div>
+                  <label
+                    htmlFor={selectId}
+                    className="space-y-1 text-xs text-muted-foreground"
+                  >
+                    <span>Категория и будущее правило</span>
+                    <select
+                      id={selectId}
+                      value={pending?.category ?? ''}
+                      onChange={(event) => onChange(group, event.target.value)}
+                      className="focus-ring min-h-12 w-full cursor-pointer rounded-xl border bg-background px-3 text-sm text-foreground"
+                    >
+                      <option value="" disabled>
+                        Выберите категорию
+                      </option>
+                      {categoriesForAmount(
+                        categories,
+                        group.direction === 'income' ? 1 : -1,
+                      ).map((category) => (
+                        <option key={category.id} value={category.name}>
+                          {category.name}
+                        </option>
+                      ))}
+                    </select>
+                  </label>
+                </div>
+              );
+            })}
+          </div>
+          <div className="flex flex-col gap-3 border-t p-4 sm:flex-row sm:items-center sm:justify-between sm:px-5">
+            <p className="text-xs leading-relaxed text-muted-foreground sm:text-sm">
+              {coveredCount > 0
+                ? `Уже распределено правилами: ${coveredCount}. `
+                : ''}
+              Выбрано новых правил: {pendingCount}.
+            </p>
+            <div className="flex flex-wrap gap-2">
+              {visibleGroups < groupsWithoutRule.length && (
+                <Button
+                  type="button"
+                  variant="outline"
+                  onClick={() => setVisibleGroups((current) => current + 8)}
+                  className="min-h-12 cursor-pointer"
+                >
+                  Показать ещё{' '}
+                  {Math.min(8, groupsWithoutRule.length - visibleGroups)}
+                </Button>
+              )}
+              <Button
+                type="button"
+                disabled={!pendingCount || saving}
+                onClick={onSave}
+                className="min-h-12 cursor-pointer"
+              >
+                {saving ? (
+                  <>
+                    <Spinner /> Сохраняем…
+                  </>
+                ) : (
+                  `Сохранить правила · ${pendingCount}`
+                )}
+              </Button>
+            </div>
+          </div>
+        </>
+      ) : (
+        <div className="flex items-start gap-3 p-4 text-sm sm:p-5">
+          <CheckCircle2
+            className="mt-0.5 size-5 shrink-0 text-emerald-600 dark:text-emerald-400"
+            aria-hidden="true"
+          />
+          <p>
+            Все повторяющиеся описания уже распределены действующими правилами.
+          </p>
+        </div>
+      )}
+    </section>
+  );
+}
+
+function findDescriptionRule(
+  group: RepeatedDescriptionGroup,
+  rules: CategoryRule[],
+) {
+  return rules.find((rule) => {
+    if (
+      !rule.isActive ||
+      rule.field !== 'description' ||
+      (rule.direction !== 'both' && rule.direction !== group.direction)
+    ) {
+      return false;
+    }
+    const needle = rule.value
+      .replace(/\s+/g, ' ')
+      .trim()
+      .toLocaleLowerCase('ru');
+    return Boolean(needle) && group.normalizedDescription.includes(needle);
+  });
+}
+
 function PreviewList({
   preview,
   categories,
@@ -1103,7 +1380,7 @@ function PreviewList({
             {showOnlyAttention
               ? `${attentionRows.length} требуют внимания`
               : `${preview.rows.length} строк`}{' '}
-            · выбрано {rowsToSave}
+            · выбрано {rowsToSave}. Новые строки подтверждены автоматически.
           </p>
         </div>
         <div className="flex flex-wrap gap-2">

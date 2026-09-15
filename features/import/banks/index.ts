@@ -38,3 +38,34 @@ export function inferBankMapping(
     ...bankStatementParsers[bank].inferMapping(headers),
   };
 }
+
+export function mergeStoredBankMapping(
+  bank: BankCode,
+  headers: string[],
+  inferredMapping: ColumnMapping,
+  storedMapping?: ColumnMapping,
+) {
+  if (!storedMapping) return inferredMapping;
+  const merged = { ...inferredMapping, ...storedMapping };
+
+  if (bank === 'tbank' && storedMapping.description !== undefined) {
+    const storedHeader = normalizeHeader(headers[storedMapping.description]);
+    if (/^номер карты$|^card number$/.test(storedHeader)) {
+      if (inferredMapping.description === undefined) {
+        delete merged.description;
+      } else {
+        merged.description = inferredMapping.description;
+      }
+    }
+  }
+
+  return merged;
+}
+
+function normalizeHeader(value?: string) {
+  return (value ?? '')
+    .toLocaleLowerCase('ru')
+    .replace(/[«»"']/g, '')
+    .replace(/\s+/g, ' ')
+    .trim();
+}

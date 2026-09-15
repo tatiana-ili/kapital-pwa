@@ -3,7 +3,10 @@ import { readFile } from 'node:fs/promises';
 import test from 'node:test';
 import { parseCsv, readStatementFile } from '../features/import/file-reader.ts';
 import { describeStatementReadError } from '../features/import/read-error.ts';
-import { bankStatementParsers } from '../features/import/banks/index.ts';
+import {
+  bankStatementParsers,
+  mergeStoredBankMapping,
+} from '../features/import/banks/index.ts';
 import { parseStoredMapping } from '../features/import/profile-mapping.ts';
 import {
   loadLocalImportProfile,
@@ -126,6 +129,8 @@ test('T-Bank PDF layout keeps wrapped descriptions and validates statement total
           [
             [50, 'Дата и время операции'],
             [290, 'Сумма операции в валюте карты'],
+            [390, 'Описание операции'],
+            [505, 'Номер карты'],
           ],
         ],
         [
@@ -136,7 +141,7 @@ test('T-Bank PDF layout keeps wrapped descriptions and validates statement total
             [200, '-100.00 ₽'],
             [300, '-100.00 ₽'],
             [395, 'Оплата в GLOBUS'],
-            [525, '1234'],
+            [510, '1234'],
           ],
         ],
         [
@@ -155,7 +160,7 @@ test('T-Bank PDF layout keeps wrapped descriptions and validates statement total
             [200, '+250.00 ₽'],
             [300, '+250.00 ₽'],
             [395, 'Пополнение. Система быстрых платежей'],
-            [525, '1234'],
+            [510, '1234'],
           ],
         ],
         [
@@ -188,10 +193,31 @@ test('T-Bank PDF layout keeps wrapped descriptions and validates statement total
   assert.equal(parsed.table.length, 3);
   assert.equal(parsed.table[1][2], -100);
   assert.equal(parsed.table[1][3], 'GLOBUS MOSCOW RUS');
+  assert.equal(parsed.table[1][4], 'Оплата в GLOBUS MOSCOW RUS');
+  assert.doesNotMatch(parsed.table[1][4], /1234/);
   assert.equal(parsed.diagnostics.confidence, 'high');
   assert.ok(
     parsed.diagnostics.checks.every((check) => check.status === 'passed'),
   );
+});
+
+test('a stale T-Bank profile cannot map the card number as description', () => {
+  const headers = [
+    'Дата и время операции',
+    'Сумма операции',
+    'Номер карты',
+    'Описание',
+  ];
+  const inferred = bankStatementParsers.tbank.inferMapping(headers);
+  const mapping = mergeStoredBankMapping('tbank', headers, inferred, {
+    date: 0,
+    amount: 1,
+    description: 2,
+  });
+
+  assert.equal(mapping.description, 3);
+  assert.equal(mapping.date, 0);
+  assert.equal(mapping.amount, 1);
 });
 
 test('Yandex PDF layout uses contract currency and auto-confirms exact own-account transfers', () => {
