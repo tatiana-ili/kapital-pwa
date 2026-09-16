@@ -11,7 +11,8 @@
 1. `supabase/migrations/202609110001_initial_schema.sql` — таблицы PostgreSQL и Row Level Security;
 2. `supabase/migrations/202609110002_statement_import.sql` — атомарное сохранение проверенной выписки;
 3. `supabase/migrations/202609120003_import_integrity.sql` — повторный импорт с учётом счёта, совместимость старых отпечатков и связывание подтверждённых внутренних переводов;
-4. `supabase/migrations/202609120004_category_management.sql` — направления правил, проверка имён категорий и атомарное переименование в операциях, правилах и бюджетах.
+4. `supabase/migrations/202609120004_category_management.sql` — направления правил, проверка имён категорий и атомарное переименование в операциях, правилах и бюджетах;
+5. `supabase/migrations/202609160001_category_rule_all_fields.sql` — поиск правил по всем полям операции.
 
 Персональные строки ограничены условием `user_id = auth.uid()`.
 

@@ -1,7 +1,14 @@
 'use client';
 
-import { useMemo, useState } from 'react';
-import { ArrowLeftRight, Check, ListFilter, Plus, Search } from 'lucide-react';
+import { useLayoutEffect, useMemo, useRef, useState } from 'react';
+import {
+  ArrowLeftRight,
+  Check,
+  ChevronDown,
+  ListFilter,
+  Plus,
+  Search,
+} from 'lucide-react';
 import { categoriesForAmount } from '@/features/categories/defaults';
 import {
   transactionCanBeAddedToTarget,
@@ -67,6 +74,19 @@ export function CategoryReviewSheet({
   const [mode, setMode] = useState<ReviewMode>('included');
   const [query, setQuery] = useState('');
   const [visibleCount, setVisibleCount] = useState(INITIAL_VISIBLE_COUNT);
+  const scrollRef = useRef<HTMLDivElement>(null);
+  const pendingScrollTop = useRef<number | null>(null);
+
+  function keepScrollPosition(action: () => void) {
+    pendingScrollTop.current = scrollRef.current?.scrollTop ?? null;
+    action();
+  }
+
+  useLayoutEffect(() => {
+    if (pendingScrollTop.current === null || !scrollRef.current) return;
+    scrollRef.current.scrollTop = pendingScrollTop.current;
+    if (!savingId) pendingScrollTop.current = null;
+  }, [transactions, savingId]);
 
   const includedCount = useMemo(
     () =>
@@ -196,21 +216,28 @@ export function CategoryReviewSheet({
             </div>
           </div>
 
-          <div className="min-h-0 flex-1 overflow-y-auto px-4 py-4 sm:px-5">
-            {error && (
-              <p
-                className="mb-3 rounded-xl border border-destructive/30 bg-destructive/10 px-3 py-3 text-sm text-destructive"
-                role="alert"
-              >
-                {error}
-              </p>
-            )}
-            {message && (
-              <output className="mb-3 block rounded-xl bg-emerald-500/10 px-3 py-3 text-sm text-emerald-700 dark:text-emerald-300">
-                {message}
-              </output>
-            )}
+          {(error || message) && (
+            <div className="border-b px-4 py-2 sm:px-5">
+              {error && (
+                <p
+                  className="rounded-xl border border-destructive/30 bg-destructive/10 px-3 py-3 text-sm text-destructive"
+                  role="alert"
+                >
+                  {error}
+                </p>
+              )}
+              {message && (
+                <output className="block rounded-xl bg-emerald-500/10 px-3 py-3 text-sm text-emerald-700 dark:text-emerald-300">
+                  {message}
+                </output>
+              )}
+            </div>
+          )}
 
+          <div
+            ref={scrollRef}
+            className="min-h-0 flex-1 overflow-y-auto px-4 py-4 sm:px-5"
+          >
             {loading ? (
               <div
                 className="grid min-h-52 place-items-center"
@@ -234,8 +261,12 @@ export function CategoryReviewSheet({
                     included={mode === 'included'}
                     saving={savingId === transaction.id}
                     disabled={Boolean(savingId)}
-                    onMoveToCategory={onMoveToCategory}
-                    onSetOwnTransfer={onSetOwnTransfer}
+                    onMoveToCategory={(item, category) =>
+                      keepScrollPosition(() => onMoveToCategory(item, category))
+                    }
+                    onSetOwnTransfer={(item, isTransfer) =>
+                      keepScrollPosition(() => onSetOwnTransfer(item, isTransfer))
+                    }
                   />
                 ))}
                 {visibleCount < filtered.length && (
@@ -326,6 +357,7 @@ function ReviewTransaction({
     isTransfer: boolean,
   ) => void;
 }) {
+  const [expanded, setExpanded] = useState(false);
   const categoryNames = [
     ...new Set([
       transaction.category,
@@ -337,8 +369,15 @@ function ReviewTransaction({
 
   return (
     <article className="rounded-2xl border bg-card p-4">
-      <div className="flex items-start justify-between gap-3">
-        <div className="min-w-0">
+      <button
+        type="button"
+        aria-expanded={expanded}
+        aria-controls={`review-details-${transaction.id}`}
+        aria-label={`${expanded ? 'Скрыть' : 'Показать'} подробности операции ${transaction.merchant}`}
+        onClick={() => setExpanded((current) => !current)}
+        className="focus-ring flex min-h-11 w-full cursor-pointer items-start justify-between gap-3 rounded-xl text-left"
+      >
+        <div className="min-w-0 flex-1">
           <h3 className="truncate text-sm font-semibold sm:text-base">
             {transaction.merchant}
           </h3>
@@ -355,16 +394,56 @@ function ReviewTransaction({
             </p>
           )}
         </div>
-        <p
-          className={`shrink-0 text-sm font-semibold tabular-nums sm:text-base ${
+        <span
+          className={`max-w-[45%] shrink-0 text-right text-sm font-semibold tabular-nums [overflow-wrap:anywhere] sm:text-base ${
             transaction.amount > 0
               ? 'text-emerald-600 dark:text-emerald-400'
               : ''
           }`}
         >
           {formatRubles(transaction.amount)}
-        </p>
-      </div>
+        </span>
+        <ChevronDown
+          className={`mt-0.5 size-4 shrink-0 text-muted-foreground transition-transform ${expanded ? 'rotate-180' : ''}`}
+          aria-hidden="true"
+        />
+      </button>
+
+      {expanded && (
+        <div
+          id={`review-details-${transaction.id}`}
+          className="mt-3 space-y-2 rounded-xl bg-muted/60 p-3 text-sm [overflow-wrap:anywhere]"
+        >
+          <ReviewDetail
+            label="Продавец или получатель"
+            value={transaction.merchant}
+          />
+          <ReviewDetail
+            label="Описание"
+            value={transaction.description || 'Нет описания'}
+          />
+          <ReviewDetail
+            label="Дата"
+            value={formatTransactionDate(transaction.date)}
+          />
+          {transaction.postedDate && (
+            <ReviewDetail
+              label="Дата проведения"
+              value={formatTransactionDate(transaction.postedDate)}
+            />
+          )}
+          <ReviewDetail label="Банк" value={transaction.bank} />
+          <ReviewDetail label="Счёт" value={transaction.accountId} />
+          <ReviewDetail label="Категория" value={transaction.category} />
+          {transaction.note && (
+            <ReviewDetail label="Заметка" value={transaction.note} />
+          )}
+          {transaction.sourceFile && (
+            <ReviewDetail label="Файл выписки" value={transaction.sourceFile} />
+          )}
+          <ReviewDetail label="Сумма" value={formatRubles(transaction.amount)} />
+        </div>
+      )}
 
       <div className="mt-3">
         {target.kind === 'own-transfers' ? (
@@ -423,6 +502,36 @@ function ReviewTransaction({
           </Button>
         )}
       </div>
+      {target.kind === 'category' && (
+        <Button
+          type="button"
+          variant="outline"
+          aria-pressed={transaction.isTransfer}
+          className="mt-2 min-h-11 w-full cursor-pointer"
+          disabled={disabled}
+          onClick={() => onSetOwnTransfer(transaction, !transaction.isTransfer)}
+        >
+          {saving ? (
+            <Spinner className="size-4" />
+          ) : (
+            <ArrowLeftRight className="size-4" aria-hidden="true" />
+          )}
+          {transaction.isTransfer
+            ? 'Снять пометку перевода'
+            : 'Отметить своим переводом'}
+        </Button>
+      )}
     </article>
+  );
+}
+
+function ReviewDetail({ label, value }: { label: string; value: string }) {
+  return (
+    <div>
+      <span className="block text-xs font-medium text-muted-foreground">
+        {label}
+      </span>
+      <span className="block whitespace-pre-wrap">{value}</span>
+    </div>
   );
 }

@@ -1,5 +1,6 @@
 import { categoriesForAmount } from './defaults.ts';
 import type { CategoryRule, FinanceCategory } from './types.ts';
+import { bankNames } from '../../lib/finance-data.ts';
 
 type ExistingTransaction = {
   id: string;
@@ -8,15 +9,63 @@ type ExistingTransaction = {
   amount: number;
   category: string;
   isTransfer?: boolean;
+  bank?: string;
+  accountId?: string;
+  date?: string;
+  postedDate?: string;
+  currency?: string;
+  transactionType?: string;
+  note?: string;
+  sourceFile?: string;
 };
 
+type RuleInput = Omit<ExistingTransaction, 'id' | 'category'> & {
+  category?: string;
+};
+
+export function categoryRuleKeywords(value: string) {
+  return value
+    .split(',')
+    .map((part) => part.trim().toLocaleLowerCase('ru'))
+    .filter(Boolean);
+}
+
+export function normalizeCategoryRuleValue(value: string) {
+  return value
+    .split(',')
+    .map((part) => part.trim())
+    .filter(Boolean)
+    .join(', ');
+}
+
+function searchableText(input: RuleInput, field: CategoryRule['field']) {
+  if (field === 'merchant' || field === 'description') {
+    return [input[field]];
+  }
+  const bankName =
+    input.bank && input.bank in bankNames
+      ? bankNames[input.bank as keyof typeof bankNames]
+      : undefined;
+  return [
+    input.merchant,
+    input.description,
+    input.bank,
+    bankName,
+    input.accountId,
+    input.date,
+    input.postedDate,
+    input.currency,
+    input.transactionType,
+    input.note,
+    input.sourceFile,
+    input.category,
+    String(input.amount),
+    String(Math.abs(input.amount)),
+  ];
+}
+
 export function applyCategoryRules(
-  input: {
-    merchant: string;
-    description: string;
-    amount: number;
-    isTransfer?: boolean;
-  },
+  input: RuleInput,
   fallback: string,
   categories: FinanceCategory[],
   rules: CategoryRule[],
@@ -41,9 +90,19 @@ export function applyCategoryRules(
     ) {
       continue;
     }
-    const needle = rule.value.trim().toLocaleLowerCase('ru');
-    if (!needle) continue;
-    if (input[rule.field].toLocaleLowerCase('ru').includes(needle)) {
+    const keywords =
+      rule.field === 'all'
+        ? categoryRuleKeywords(rule.value)
+        : [rule.value.trim().toLocaleLowerCase('ru')].filter(Boolean);
+    if (!keywords.length) continue;
+    const values = searchableText(input, rule.field).map((value) =>
+      (value ?? '').toLocaleLowerCase('ru'),
+    );
+    if (
+      keywords.some((keyword) =>
+        values.some((value) => value.includes(keyword)),
+      )
+    ) {
       return rule.targetCategory;
     }
   }

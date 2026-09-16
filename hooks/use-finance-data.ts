@@ -37,7 +37,7 @@ export function useFinanceData(
   const [loading, setLoading] = useState(Boolean(client));
   const [error, setError] = useState('');
 
-  const refresh = useCallback(async () => {
+  const refresh = useCallback(async ({ silent = false }: { silent?: boolean } = {}) => {
     if (!client) {
       const local = loadLocalFinanceData();
       const savedIds = new Set(local.transactions.map((item) => item.id));
@@ -66,7 +66,7 @@ export function useFinanceData(
       return;
     }
 
-    setLoading(true);
+    if (!silent) setLoading(true);
     setError('');
     try {
       const data = await loadFinanceData(client, {
@@ -77,14 +77,16 @@ export function useFinanceData(
       setTransactions(data.transactions);
       setSnapshots(data.snapshots);
     } catch {
-      setAccounts([]);
-      setTransactions([]);
-      setSnapshots([]);
+      if (!silent) {
+        setAccounts([]);
+        setTransactions([]);
+        setSnapshots([]);
+      }
       setError(
         'Не удалось загрузить данные. Проверьте соединение и попробуйте ещё раз.',
       );
     } finally {
-      setLoading(false);
+      if (!silent) setLoading(false);
     }
   }, [client, allTransactions, includeSnapshots]);
 

@@ -5,7 +5,10 @@ import type {
   CategoryRule,
   FinanceCategory,
 } from '../../features/categories/types.ts';
-import { categoryRuleUpdates } from '../../features/categories/rules.ts';
+import {
+  categoryRuleUpdates,
+  normalizeCategoryRuleValue,
+} from '../../features/categories/rules.ts';
 
 type CategoryRow = {
   id: string;
@@ -33,6 +36,14 @@ type RuleTransactionRow = {
   amount: number | string;
   category: string;
   is_transfer: boolean;
+  bank?: string;
+  account_id?: string;
+  transaction_date?: string;
+  posted_date?: string;
+  currency?: string;
+  transaction_type?: string;
+  note?: string;
+  source_file?: string;
 };
 
 async function loadRuleTransactions(client: SupabaseClient) {
@@ -41,7 +52,7 @@ async function loadRuleTransactions(client: SupabaseClient) {
   for (let offset = 0; ; offset += pageSize) {
     const result = await client
       .from('transactions')
-      .select('id,merchant,description,amount,category,is_transfer')
+      .select('id,merchant,description,amount,category,is_transfer,bank,account_id,transaction_date,posted_date,currency,transaction_type,note,source_file')
       .order('id', { ascending: true })
       .range(offset, offset + pageSize - 1);
     if (result.error) throw result.error;
@@ -65,6 +76,14 @@ async function applyStoredCategoryRules(client: SupabaseClient) {
       amount: Number(transaction.amount),
       category: transaction.category,
       isTransfer: transaction.is_transfer,
+      bank: transaction.bank,
+      accountId: transaction.account_id,
+      date: transaction.transaction_date,
+      postedDate: transaction.posted_date,
+      currency: transaction.currency,
+      transactionType: transaction.transaction_type,
+      note: transaction.note,
+      sourceFile: transaction.source_file,
     })),
     categories,
     rules,
@@ -122,7 +141,7 @@ export async function loadCategoryData(
   const rules = ((rulesResult.data ?? []) as RuleRow[])
     .filter(
       (row) =>
-        (row.field === 'merchant' || row.field === 'description') &&
+        (row.field === 'all' || row.field === 'merchant' || row.field === 'description') &&
         row.operator === 'contains' &&
         typeof row.value === 'string',
     )
@@ -175,7 +194,7 @@ export async function createCategoryRule(
   direction: CategoryDirection,
 ) {
   const userId = await currentUserId(client);
-  const needle = value.trim();
+  const needle = normalizeCategoryRuleValue(value);
   if (!needle || needle.length > 120) {
     throw new Error('Укажите текст правила длиной до 120 символов.');
   }
@@ -214,7 +233,7 @@ export async function createCategoryRule(
   }
   const { error } = await client.from('category_rules').insert({
     user_id: userId,
-    name: `${field === 'merchant' ? 'Продавец' : 'Описание'} содержит «${needle}»`,
+    name: `${field === 'all' ? 'Операция' : field === 'merchant' ? 'Продавец' : 'Описание'} содержит «${needle}»`,
     priority: 100,
     field,
     operator: 'contains',

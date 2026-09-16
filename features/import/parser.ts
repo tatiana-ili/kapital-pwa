@@ -313,7 +313,18 @@ export function parseStatementTable({
       const category = definiteInternalTransfer
         ? 'Переводы'
         : applyCategoryRules(
-            { merchant, description, amount: safeAmount },
+            {
+              merchant,
+              description,
+              amount: safeAmount,
+              bank: bankNames[bank],
+              accountId: existingAccountId || accountName,
+              date: safeDate,
+              postedDate: postedDate || undefined,
+              currency: 'RUB',
+              transactionType,
+              sourceFile: source.fileName,
+            },
             inferCategory(safeAmount, combinedText, transactionType),
             categories,
             userCategoryRules,

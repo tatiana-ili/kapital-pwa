@@ -268,8 +268,8 @@ export default function Home() {
               )}
             </section>
 
-            <section className="grid gap-4 xl:grid-cols-[1.1fr_.9fr]">
-              <article className="surface-card rounded-3xl border p-5 sm:p-6">
+            <section className="grid min-w-0 grid-cols-1 gap-4 xl:grid-cols-[minmax(0,1.1fr)_minmax(0,.9fr)]">
+              <article className="surface-card min-w-0 rounded-3xl border p-5 sm:p-6">
                 <div className="flex items-center justify-between">
                   <div>
                     <h2 className="text-lg font-semibold tracking-tight">
@@ -303,7 +303,7 @@ export default function Home() {
                         </div>
                       </div>
                     </div>
-                    <div className="w-full space-y-3">
+                    <div className="min-w-0 w-full space-y-3">
                       {summary.categories.map((category, index) => (
                         <CategoryDot
                           key={category.name}
@@ -321,7 +321,7 @@ export default function Home() {
                 )}
               </article>
 
-              <article className="surface-card rounded-3xl border p-5 sm:p-6">
+              <article className="surface-card min-w-0 rounded-3xl border p-5 sm:p-6">
                 <div className="flex items-center justify-between gap-4">
                   <h2 className="text-lg font-semibold tracking-tight">
                     Последние операции
@@ -468,8 +468,15 @@ function CategoryDot({
         style={{ backgroundColor: color }}
         aria-hidden="true"
       />
-      <span className="flex-1 text-muted-foreground">{name}</span>
-      <span className="font-medium tabular-nums">{value}</span>
+      <span
+        className="min-w-0 flex-1 truncate text-muted-foreground"
+        title={name}
+      >
+        {name}
+      </span>
+      <span className="max-w-[50%] text-right font-medium tabular-nums [overflow-wrap:anywhere]">
+        {value}
+      </span>
     </div>
   );
 }

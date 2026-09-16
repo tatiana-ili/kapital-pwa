@@ -171,7 +171,7 @@ export default function AnalyticsPage() {
         )}
 
         <section aria-label="Период анализа" className="space-y-3">
-          <div className="flex gap-1.5 overflow-x-auto pb-1">
+          <div className="flex flex-wrap gap-1.5">
             {periods.map((period) => (
               <button
                 key={period.value}
@@ -367,9 +367,9 @@ export default function AnalyticsPage() {
               </div>
             </details>
 
-            <div className="grid gap-4 xl:grid-cols-[1.05fr_.95fr]">
+            <div className="grid min-w-0 grid-cols-1 gap-4 xl:grid-cols-[minmax(0,1.05fr)_minmax(0,.95fr)]">
               <section
-                className="surface-card rounded-3xl border p-5 sm:p-6"
+                className="surface-card min-w-0 rounded-3xl border p-5 sm:p-6"
                 aria-labelledby="categories-title"
               >
                 <h3 id="categories-title" className="text-lg font-semibold">
@@ -413,7 +413,7 @@ export default function AnalyticsPage() {
               </section>
 
               <section
-                className="surface-card rounded-3xl border p-5 sm:p-6"
+                className="surface-card min-w-0 rounded-3xl border p-5 sm:p-6"
                 aria-labelledby="months-title"
               >
                 <h3 id="months-title" className="text-lg font-semibold">
@@ -491,9 +491,9 @@ export default function AnalyticsPage() {
               </div>
             </section>
 
-            <div className="grid gap-4 xl:grid-cols-[.72fr_1.28fr]">
+            <div className="grid min-w-0 grid-cols-1 gap-4 xl:grid-cols-[minmax(0,.72fr)_minmax(0,1.28fr)]">
               <section
-                className="surface-card rounded-3xl border p-5 sm:p-6"
+                className="surface-card min-w-0 rounded-3xl border p-5 sm:p-6"
                 aria-labelledby="averages-title"
               >
                 <h3 id="averages-title" className="text-lg font-semibold">
@@ -509,7 +509,7 @@ export default function AnalyticsPage() {
                 </p>
               </section>
               <section
-                className="surface-card rounded-3xl border p-5 sm:p-6"
+                className="surface-card min-w-0 rounded-3xl border p-5 sm:p-6"
                 aria-labelledby="largest-title"
               >
                 <h3 id="largest-title" className="text-lg font-semibold">
@@ -660,7 +660,7 @@ function AverageCard({ label, value }: { label: string; value: number }) {
   return (
     <article className="rounded-2xl bg-muted/65 p-4">
       <p className="text-sm text-muted-foreground">{label}</p>
-      <p className="mt-2 text-xl font-semibold tabular-nums">
+      <p className="mt-2 text-xl font-semibold tabular-nums [overflow-wrap:anywhere]">
         {formatRubles(value)}
       </p>
     </article>

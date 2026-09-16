@@ -11,7 +11,7 @@ export type CategoryRule = {
   id: string;
   name: string;
   priority: number;
-  field: 'merchant' | 'description';
+  field: 'all' | 'merchant' | 'description';
   operator: 'contains';
   value: string;
   direction: CategoryDirection;

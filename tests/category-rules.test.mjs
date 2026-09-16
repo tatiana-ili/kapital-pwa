@@ -24,6 +24,7 @@ import {
   transactionCanBeAddedToTarget,
   transactionMatchesReviewTarget,
 } from '../features/categories/review.ts';
+import { applyCategoryRules } from '../features/categories/rules.ts';
 import {
   loadLocalPlanningData,
   saveLocalBudget,
@@ -47,6 +48,96 @@ function withLocalStorage(run) {
     else globalThis.window = previousWindow;
   }
 }
+
+test('new category rules match any comma-separated keyword across operation fields', () => {
+  const categories = loadLocalCategoryData().categories;
+  const rule = {
+    id: 'all-fields',
+    name: 'Операция содержит «Ozon, абонемент»',
+    priority: 100,
+    field: 'all',
+    operator: 'contains',
+    value: 'Ozon, абонемент',
+    direction: 'expense',
+    targetCategory: 'Продукты',
+    isActive: true,
+  };
+  for (const input of [
+    { merchant: 'Ozon', description: '', amount: -100 },
+    { merchant: 'Клуб', description: 'Оплата абонемента', amount: -100 },
+    { merchant: 'Клуб', description: '', amount: -100, sourceFile: 'ozon.csv' },
+  ]) {
+    assert.equal(applyCategoryRules(input, 'Прочее', categories, [rule]), 'Продукты');
+  }
+  assert.equal(
+    applyCategoryRules(
+      { merchant: 'Клуб', description: '', amount: -100, bank: 'sber' },
+      'Прочее',
+      categories,
+      [{ ...rule, value: 'Сбер, Яндекс' }],
+    ),
+    'Продукты',
+  );
+  assert.equal(
+    applyCategoryRules(
+      { merchant: 'Клуб', description: 'Обычная покупка', amount: -100 },
+      'Прочее',
+      categories,
+      [rule],
+    ),
+    'Прочее',
+  );
+  assert.equal(
+    applyCategoryRules(
+      { merchant: 'Ozon', description: '', amount: 100 },
+      'Прочее',
+      categories,
+      [rule],
+    ),
+    'Прочее',
+  );
+  assert.equal(
+    applyCategoryRules(
+      { merchant: 'Ozon', description: '', amount: -100 },
+      'Прочее',
+      categories,
+      [{ ...rule, field: 'merchant', value: 'Ozon, абонемент' }],
+    ),
+    'Прочее',
+  );
+});
+
+test('an all-fields rule applies to previously imported operations', () => {
+  withLocalStorage(() => {
+    const table = parseCsv(
+      'Дата;Сумма;Магазин;Описание\n11.09.2026;-1500;Тестовый клуб;Абонемент',
+    );
+    const source = {
+      fileName: 'tbank.csv',
+      fileFormat: 'csv',
+      fileHash: 'all-fields-rule',
+      table,
+      inspection: inspectStatementTable(table, 'tbank.csv'),
+    };
+    const preview = parseStatementTable({
+      bank: 'tbank',
+      accountName: 'Основной',
+      source,
+    });
+    saveLocalStatement({
+      bank: 'tbank',
+      accountName: 'Основной',
+      sourceFile: source.fileName,
+      fileFormat: source.fileFormat,
+      fileHash: source.fileHash,
+      headerSignature: source.inspection.headerSignature,
+      columnMapping: source.inspection.mapping,
+      rows: preview.rows,
+    });
+    createLocalCategoryRule('all', 'неизвестно, абонемент', 'Здоровье', 'expense');
+    assert.equal(loadLocalFinanceData().transactions[0].category, 'Здоровье');
+  });
+});
 
 test('custom category rule changes future imports and survives category rename', () => {
   withLocalStorage(() => {

@@ -55,9 +55,6 @@ export default function CategoriesPage() {
   const [direction, setDirection] = useState<CategoryDirection>('expense');
   const [renameId, setRenameId] = useState<string | null>(null);
   const [renameName, setRenameName] = useState('');
-  const [ruleField, setRuleField] = useState<'merchant' | 'description'>(
-    'merchant',
-  );
   const [ruleValue, setRuleValue] = useState('');
   const [ruleDirection, setRuleDirection] = useState<'expense' | 'income'>(
     'expense',
@@ -136,7 +133,7 @@ export default function CategoriesPage() {
     setBusy(true);
     setMessage('');
     const saved = await createRule(
-      ruleField,
+      'all',
       ruleValue,
       selectedRuleTarget,
       ruleDirection,
@@ -204,7 +201,9 @@ export default function CategoriesPage() {
       } else {
         replaceTransaction({ ...transaction, ...changes });
       }
-      await refreshTransactions();
+      if (client && changes.isTransfer !== undefined) {
+        await refreshTransactions({ silent: true });
+      }
       setReviewMessage(successMessage);
     } catch {
       setReviewError(
@@ -423,21 +422,6 @@ export default function CategoriesPage() {
                 импортам.
               </p>
               <div className="mt-4 space-y-4">
-                <label className="block space-y-2 text-sm font-medium">
-                  <span>Где искать</span>
-                  <select
-                    value={ruleField}
-                    onChange={(event) =>
-                      setRuleField(
-                        event.target.value as 'merchant' | 'description',
-                      )
-                    }
-                    className="focus-ring min-h-12 w-full cursor-pointer rounded-xl border bg-background px-3 text-base"
-                  >
-                    <option value="merchant">Продавец или получатель</option>
-                    <option value="description">Описание операции</option>
-                  </select>
-                </label>
                 <label
                   htmlFor="rule-value"
                   className="block space-y-2 text-sm font-medium"
@@ -448,9 +432,13 @@ export default function CategoriesPage() {
                     value={ruleValue}
                     onChange={(event) => setRuleValue(event.target.value)}
                     maxLength={120}
-                    placeholder="Например, Пятёрочка"
+                    placeholder="Например, Пятёрочка, Перекрёсток"
                     className="h-12 rounded-xl text-base md:text-base"
                   />
+                  <span className="block text-xs font-normal text-muted-foreground">
+                    Можно указать несколько слов через запятую. Достаточно
+                    совпадения любого слова в данных операции.
+                  </span>
                 </label>
                 <label className="block space-y-2 text-sm font-medium">
                   <span>Для операций</span>

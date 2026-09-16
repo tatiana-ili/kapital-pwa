@@ -1,4 +1,5 @@
 import { defaultCategories } from '../features/categories/defaults.ts';
+import { normalizeCategoryRuleValue } from '../features/categories/rules.ts';
 import type {
   CategoryData,
   CategoryDirection,
@@ -115,7 +116,7 @@ export function createLocalCategoryRule(
   targetCategory: string,
   direction: CategoryDirection,
 ) {
-  const needle = value.trim();
+  const needle = normalizeCategoryRuleValue(value);
   if (!needle || needle.length > 120) {
     throw new Error('Укажите текст правила длиной до 120 символов.');
   }
@@ -148,7 +149,7 @@ export function createLocalCategoryRule(
   }
   const rule: CategoryRule = {
     id: globalThis.crypto.randomUUID(),
-    name: `${field === 'merchant' ? 'Продавец' : 'Описание'} содержит «${needle}»`,
+    name: `${field === 'all' ? 'Операция' : field === 'merchant' ? 'Продавец' : 'Описание'} содержит «${needle}»`,
     priority: 100,
     field,
     operator: 'contains',
