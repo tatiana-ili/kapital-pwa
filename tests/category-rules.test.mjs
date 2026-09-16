@@ -12,6 +12,7 @@ import {
   loadLocalCategoryData,
   renameLocalCategory,
   setLocalCategoryRuleActive,
+  updateLocalCategoryRule,
 } from '../lib/local-categories-store.ts';
 import {
   loadLocalFinanceData,
@@ -29,7 +30,10 @@ import {
   loadLocalPlanningData,
   saveLocalBudget,
 } from '../lib/local-planning-store.ts';
-import { createCategoryRule as createRemoteCategoryRule } from '../lib/supabase/categories.ts';
+import {
+  createCategoryRule as createRemoteCategoryRule,
+  updateCategoryRule as updateRemoteCategoryRule,
+} from '../lib/supabase/categories.ts';
 
 function withLocalStorage(run) {
   const previousWindow = globalThis.window;
@@ -67,7 +71,10 @@ test('new category rules match any comma-separated keyword across operation fiel
     { merchant: 'Клуб', description: 'Оплата абонемента', amount: -100 },
     { merchant: 'Клуб', description: '', amount: -100, sourceFile: 'ozon.csv' },
   ]) {
-    assert.equal(applyCategoryRules(input, 'Прочее', categories, [rule]), 'Продукты');
+    assert.equal(
+      applyCategoryRules(input, 'Прочее', categories, [rule]),
+      'Продукты',
+    );
   }
   assert.equal(
     applyCategoryRules(
@@ -134,7 +141,12 @@ test('an all-fields rule applies to previously imported operations', () => {
       columnMapping: source.inspection.mapping,
       rows: preview.rows,
     });
-    createLocalCategoryRule('all', 'неизвестно, абонемент', 'Здоровье', 'expense');
+    createLocalCategoryRule(
+      'all',
+      'неизвестно, абонемент',
+      'Здоровье',
+      'expense',
+    );
     assert.equal(loadLocalFinanceData().transactions[0].category, 'Здоровье');
   });
 });
@@ -252,6 +264,104 @@ test('creating or changing a category rule updates existing local operations', (
     assert.equal(
       loadLocalFinanceData().transactions[0].category,
       'Развлечения',
+    );
+  });
+});
+
+test('editing a rule keeps its identity and applies the new condition to existing operations', () => {
+  withLocalStorage(() => {
+    const table = parseCsv(
+      'Дата;Сумма;Магазин\n11.09.2026;-500;Первый клуб\n12.09.2026;-700;Второй клуб',
+    );
+    const source = {
+      fileName: 'clubs.csv',
+      fileFormat: 'csv',
+      fileHash: 'editable-rule',
+      table,
+      inspection: inspectStatementTable(table, 'clubs.csv'),
+    };
+    const preview = parseStatementTable({
+      bank: 'tbank',
+      accountName: 'Основной',
+      source,
+    });
+    saveLocalStatement({
+      bank: 'tbank',
+      accountName: 'Основной',
+      sourceFile: source.fileName,
+      fileFormat: source.fileFormat,
+      fileHash: source.fileHash,
+      headerSignature: source.inspection.headerSignature,
+      columnMapping: source.inspection.mapping,
+      rows: preview.rows,
+    });
+    const rule = createLocalCategoryRule(
+      'merchant',
+      'Первый клуб',
+      'Здоровье',
+      'expense',
+    );
+    createLocalCategoryRule(
+      'description',
+      'Абонемент',
+      'Развлечения',
+      'expense',
+    );
+    const edited = updateLocalCategoryRule(
+      rule.id,
+      'merchant',
+      ' Второй клуб ',
+      'Транспорт',
+      'expense',
+    );
+    assert.equal(edited.id, rule.id);
+    assert.equal(edited.name, 'Продавец содержит «Второй клуб»');
+    assert.equal(edited.priority, rule.priority);
+    assert.equal(
+      loadLocalFinanceData().transactions.find(
+        (item) => item.merchant === 'Второй клуб',
+      )?.category,
+      'Транспорт',
+    );
+    assert.throws(
+      () =>
+        updateLocalCategoryRule(
+          rule.id,
+          'description',
+          'Абонемент',
+          'Транспорт',
+          'expense',
+        ),
+      /уже существует/,
+    );
+    assert.equal(
+      loadLocalCategoryData().rules.find((item) => item.id === rule.id)?.value,
+      'Второй клуб',
+    );
+  });
+});
+
+test('editing a disabled rule does not apply it until enabled', () => {
+  withLocalStorage(() => {
+    const rule = createLocalCategoryRule(
+      'merchant',
+      'Первый клуб',
+      'Здоровье',
+      'expense',
+    );
+    setLocalCategoryRuleActive(rule.id, false);
+    const edited = updateLocalCategoryRule(
+      rule.id,
+      'merchant',
+      'Второй клуб',
+      'Транспорт',
+      'expense',
+    );
+    assert.equal(edited.isActive, false);
+    assert.equal(
+      loadLocalCategoryData().rules.find((item) => item.id === rule.id)
+        ?.isActive,
+      false,
     );
   });
 });
@@ -392,6 +502,114 @@ test('a remote category rule updates matches beyond the first 500 operations', a
   assert.deepEqual(updates, [
     { category: 'Здоровье', ids: ['transaction-500'] },
   ]);
+});
+
+test('editing a remote rule saves its condition and reapplies active rules', async () => {
+  const rows = [
+    {
+      id: 'rule-1',
+      name: 'Продавец содержит «Старый»',
+      priority: 100,
+      field: 'merchant',
+      operator: 'contains',
+      value: 'Старый',
+      direction: 'expense',
+      target_category: 'Здоровье',
+      is_active: true,
+    },
+  ];
+  const updates = [];
+  let transactionReads = 0;
+  const client = {
+    from(table) {
+      if (table === 'categories') {
+        return {
+          select() {
+            return {
+              async order() {
+                return {
+                  data: [
+                    {
+                      id: 'health',
+                      name: 'Здоровье',
+                      direction: 'expense',
+                      is_system: true,
+                    },
+                    {
+                      id: 'transport',
+                      name: 'Транспорт',
+                      direction: 'expense',
+                      is_system: true,
+                    },
+                  ],
+                  error: null,
+                };
+              },
+            };
+          },
+        };
+      }
+      if (table === 'category_rules') {
+        return {
+          select() {
+            return {
+              async order() {
+                return { data: rows, error: null };
+              },
+            };
+          },
+          update(payload) {
+            return {
+              async eq(_column, id) {
+                updates.push({ id, payload });
+                Object.assign(rows[0], payload);
+                return { error: null };
+              },
+            };
+          },
+        };
+      }
+      if (table === 'transactions') {
+        return {
+          select() {
+            return {
+              order() {
+                return {
+                  async range() {
+                    transactionReads += 1;
+                    return { data: [], error: null };
+                  },
+                };
+              },
+            };
+          },
+        };
+      }
+      throw new Error(`Unexpected table: ${table}`);
+    },
+  };
+  const count = await updateRemoteCategoryRule(
+    client,
+    'rule-1',
+    'description',
+    ' Новое ',
+    'Транспорт',
+    'expense',
+  );
+  assert.equal(count, 0);
+  assert.deepEqual(updates, [
+    {
+      id: 'rule-1',
+      payload: {
+        name: 'Описание содержит «Новое»',
+        field: 'description',
+        value: 'Новое',
+        target_category: 'Транспорт',
+        direction: 'expense',
+      },
+    },
+  ]);
+  assert.equal(transactionReads, 1);
 });
 
 test('the same merchant can have separate expense and income rules', () => {

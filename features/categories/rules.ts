@@ -38,6 +38,16 @@ export function normalizeCategoryRuleValue(value: string) {
     .join(', ');
 }
 
+export function categoryRuleName(field: CategoryRule['field'], value: string) {
+  const subject =
+    field === 'all'
+      ? 'Операция'
+      : field === 'merchant'
+        ? 'Продавец'
+        : 'Описание';
+  return `${subject} содержит «${value}»`;
+}
+
 function searchableText(input: RuleInput, field: CategoryRule['field']) {
   if (field === 'merchant' || field === 'description') {
     return [input[field]];

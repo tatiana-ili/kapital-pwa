@@ -46,7 +46,11 @@ type CategoryReviewSheetProps = {
   error: string;
   message: string;
   onClose: () => void;
-  onMoveToCategory: (transaction: FinanceTransaction, category: string) => void;
+  onMoveToCategory: (
+    transaction: FinanceTransaction,
+    category: string,
+    createRule: boolean,
+  ) => void;
   onSetOwnTransfer: (
     transaction: FinanceTransaction,
     isTransfer: boolean,
@@ -261,11 +265,15 @@ export function CategoryReviewSheet({
                     included={mode === 'included'}
                     saving={savingId === transaction.id}
                     disabled={Boolean(savingId)}
-                    onMoveToCategory={(item, category) =>
-                      keepScrollPosition(() => onMoveToCategory(item, category))
+                    onMoveToCategory={(item, category, createRule) =>
+                      keepScrollPosition(() =>
+                        onMoveToCategory(item, category, createRule),
+                      )
                     }
                     onSetOwnTransfer={(item, isTransfer) =>
-                      keepScrollPosition(() => onSetOwnTransfer(item, isTransfer))
+                      keepScrollPosition(() =>
+                        onSetOwnTransfer(item, isTransfer),
+                      )
                     }
                   />
                 ))}
@@ -351,13 +359,18 @@ function ReviewTransaction({
   included: boolean;
   saving: boolean;
   disabled: boolean;
-  onMoveToCategory: (transaction: FinanceTransaction, category: string) => void;
+  onMoveToCategory: (
+    transaction: FinanceTransaction,
+    category: string,
+    createRule: boolean,
+  ) => void;
   onSetOwnTransfer: (
     transaction: FinanceTransaction,
     isTransfer: boolean,
   ) => void;
 }) {
   const [expanded, setExpanded] = useState(false);
+  const [createRule, setCreateRule] = useState(false);
   const categoryNames = [
     ...new Set([
       transaction.category,
@@ -441,7 +454,10 @@ function ReviewTransaction({
           {transaction.sourceFile && (
             <ReviewDetail label="Файл выписки" value={transaction.sourceFile} />
           )}
-          <ReviewDetail label="Сумма" value={formatRubles(transaction.amount)} />
+          <ReviewDetail
+            label="Сумма"
+            value={formatRubles(transaction.amount)}
+          />
         </div>
       )}
 
@@ -472,7 +488,7 @@ function ReviewTransaction({
               value={transaction.category}
               disabled={disabled}
               onChange={(event) =>
-                onMoveToCategory(transaction, event.target.value)
+                onMoveToCategory(transaction, event.target.value, createRule)
               }
               className="focus-ring min-h-11 w-full cursor-pointer rounded-xl border bg-background px-3 text-base text-foreground disabled:cursor-wait disabled:opacity-60"
               aria-label={`Категория операции ${transaction.merchant}`}
@@ -489,7 +505,9 @@ function ReviewTransaction({
             type="button"
             className="min-h-11 w-full cursor-pointer"
             disabled={disabled}
-            onClick={() => onMoveToCategory(transaction, target.category.name)}
+            onClick={() =>
+              onMoveToCategory(transaction, target.category.name, createRule)
+            }
           >
             {saving ? (
               <Spinner className="size-4" />
@@ -502,6 +520,24 @@ function ReviewTransaction({
           </Button>
         )}
       </div>
+      {target.kind === 'category' &&
+        !transaction.isTransfer &&
+        transaction.merchant.trim().length > 0 &&
+        transaction.merchant.trim().length <= 120 && (
+          <label className="mt-2 flex cursor-pointer items-start gap-2 text-xs leading-relaxed text-muted-foreground">
+            <input
+              type="checkbox"
+              checked={createRule}
+              disabled={disabled}
+              onChange={(event) => setCreateRule(event.target.checked)}
+              className="mt-0.5 size-4 shrink-0 accent-primary"
+            />
+            <span>
+              Создать правило для «{transaction.merchant}» и применить его к
+              похожим операциям
+            </span>
+          </label>
+        )}
       {target.kind === 'category' && (
         <Button
           type="button"

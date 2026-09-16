@@ -24,6 +24,7 @@ import {
 } from '@/features/categories/review';
 import type {
   CategoryDirection,
+  CategoryRule,
   FinanceCategory,
 } from '@/features/categories/types';
 import { useCategories } from '@/hooks/use-categories';
@@ -40,6 +41,7 @@ export default function CategoriesPage() {
     createCategory,
     renameCategory,
     createRule,
+    updateRule,
     setRuleActive,
     deleteRule,
   } = useCategories();
@@ -60,6 +62,13 @@ export default function CategoriesPage() {
     'expense',
   );
   const [ruleTarget, setRuleTarget] = useState('Продукты');
+  const [editRuleId, setEditRuleId] = useState<string | null>(null);
+  const [editRuleField, setEditRuleField] =
+    useState<CategoryRule['field']>('all');
+  const [editRuleValue, setEditRuleValue] = useState('');
+  const [editRuleDirection, setEditRuleDirection] =
+    useState<CategoryDirection>('expense');
+  const [editRuleTarget, setEditRuleTarget] = useState('');
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState('');
   const [reviewTarget, setReviewTarget] = useState<CategoryReviewTarget | null>(
@@ -85,6 +94,20 @@ export default function CategoriesPage() {
   const selectedRuleTarget = targetNames.includes(ruleTarget)
     ? ruleTarget
     : (targetNames[0] ?? '');
+  const editTargetNames = [
+    ...new Set(
+      categories
+        .filter(
+          (category) =>
+            category.direction === 'both' ||
+            category.direction === editRuleDirection,
+        )
+        .map((category) => category.name),
+    ),
+  ];
+  const selectedEditRuleTarget = editTargetNames.includes(editRuleTarget)
+    ? editRuleTarget
+    : (editTargetNames[0] ?? '');
   const categoryCounts = useMemo(() => {
     const counts = new Map<string, number>();
     for (const transaction of transactions) {
@@ -141,6 +164,7 @@ export default function CategoriesPage() {
     if (saved) {
       setRuleValue('');
       setMessage('Правило сохранено и применено к уже загруженным операциям.');
+      await refreshTransactions({ silent: true });
     }
     setBusy(false);
   }
@@ -150,12 +174,46 @@ export default function CategoriesPage() {
     setBusy(true);
     setMessage('');
     const saved = await setRuleActive(id, isActive);
-    if (saved)
+    if (saved) {
       setMessage(
         isActive
           ? 'Правило включено и применено к уже загруженным операциям.'
           : 'Правило выключено. Уже назначенные категории сохранены.',
       );
+      if (isActive) await refreshTransactions({ silent: true });
+    }
+    setBusy(false);
+  }
+
+  function startEditRule(rule: CategoryRule) {
+    setEditRuleId(rule.id);
+    setEditRuleField(rule.field);
+    setEditRuleValue(rule.value);
+    setEditRuleDirection(rule.direction);
+    setEditRuleTarget(rule.targetCategory);
+    setMessage('');
+  }
+
+  async function saveRuleEdit(event: SyntheticEvent<HTMLFormElement>) {
+    event.preventDefault();
+    if (!editRuleId || !editRuleValue.trim() || !selectedEditRuleTarget || busy)
+      return;
+    setBusy(true);
+    setMessage('');
+    const saved = await updateRule(
+      editRuleId,
+      editRuleField,
+      editRuleValue,
+      selectedEditRuleTarget,
+      editRuleDirection,
+    );
+    if (saved) {
+      setEditRuleId(null);
+      setMessage(
+        'Правило изменено. Активное правило применено к уже загруженным операциям.',
+      );
+      await refreshTransactions({ silent: true });
+    }
     setBusy(false);
   }
 
@@ -185,12 +243,27 @@ export default function CategoriesPage() {
     transaction: FinanceTransaction,
     changes: Partial<FinanceTransaction>,
     successMessage: string,
+    withRule = false,
   ) {
     if (reviewSavingId) return;
     setReviewSavingId(transaction.id);
     setReviewMessage('');
     setReviewError('');
     try {
+      if (withRule) {
+        const created = await createRule(
+          'merchant',
+          transaction.merchant,
+          changes.category ?? transaction.category,
+          transaction.amount >= 0 ? 'income' : 'expense',
+        );
+        if (!created) {
+          setReviewError(
+            'Не удалось создать правило. Категория операции не изменена.',
+          );
+          return;
+        }
+      }
       if (client) {
         const persisted = await saveTransactionChanges(
           client,
@@ -201,13 +274,19 @@ export default function CategoriesPage() {
       } else {
         replaceTransaction({ ...transaction, ...changes });
       }
-      if (client && changes.isTransfer !== undefined) {
+      if (withRule || (client && changes.isTransfer !== undefined)) {
         await refreshTransactions({ silent: true });
       }
-      setReviewMessage(successMessage);
+      setReviewMessage(
+        withRule
+          ? `${successMessage} Правило создано и применено к похожим операциям.`
+          : successMessage,
+      );
     } catch {
       setReviewError(
-        'Не удалось сохранить изменение. Проверьте соединение и повторите попытку.',
+        withRule
+          ? 'Правило создано, но категорию операции сохранить не удалось. Повторите изменение категории.'
+          : 'Не удалось сохранить изменение. Проверьте соединение и повторите попытку.',
       );
     } finally {
       setReviewSavingId(null);
@@ -217,12 +296,14 @@ export default function CategoriesPage() {
   function moveReviewTransaction(
     transaction: FinanceTransaction,
     nextCategory: string,
+    withRule: boolean,
   ) {
     if (nextCategory === transaction.category) return;
     void saveReviewChanges(
       transaction,
       { category: nextCategory },
       `Операция перенесена в категорию «${nextCategory}».`,
+      withRule,
     );
   }
 
@@ -486,47 +567,156 @@ export default function CategoriesPage() {
                 <ul className="mt-4 divide-y divide-border">
                   {rules.map((rule) => (
                     <li key={rule.id} className="py-4 first:pt-0 last:pb-0">
-                      <div className="flex items-start justify-between gap-3">
-                        <div className="min-w-0">
-                          <p className="break-words text-sm font-medium">
-                            {rule.name}
+                      {editRuleId === rule.id ? (
+                        <form
+                          onSubmit={(event) => void saveRuleEdit(event)}
+                          className="space-y-3 rounded-2xl bg-muted/50 p-3"
+                        >
+                          <p className="text-sm font-semibold">
+                            Изменить правило
                           </p>
-                          <p className="mt-1 text-xs text-muted-foreground">
-                            {rule.direction === 'expense'
-                              ? 'Расходы'
-                              : rule.direction === 'income'
-                                ? 'Доходы'
-                                : 'Все операции'}{' '}
-                            · → {rule.targetCategory}
-                          </p>
-                        </div>
-                        <Badge
-                          variant={rule.isActive ? 'secondary' : 'outline'}
-                        >
-                          {rule.isActive ? 'Включено' : 'Выключено'}
-                        </Badge>
-                      </div>
-                      <div className="mt-3 flex flex-wrap gap-2">
-                        <Button
-                          variant="outline"
-                          className="min-h-11 cursor-pointer"
-                          disabled={busy}
-                          onClick={() =>
-                            void changeRule(rule.id, !rule.isActive)
-                          }
-                        >
-                          {rule.isActive ? 'Выключить' : 'Включить'}
-                        </Button>
-                        <Button
-                          variant="ghost"
-                          className="min-h-11 cursor-pointer text-destructive"
-                          disabled={busy}
-                          onClick={() => void removeRule(rule.id)}
-                        >
-                          <Trash2 className="size-4" aria-hidden="true" />{' '}
-                          Удалить
-                        </Button>
-                      </div>
+                          <label className="block space-y-1.5 text-sm font-medium">
+                            <span>Где искать</span>
+                            <select
+                              value={editRuleField}
+                              onChange={(event) =>
+                                setEditRuleField(
+                                  event.target.value as CategoryRule['field'],
+                                )
+                              }
+                              className="focus-ring min-h-11 w-full rounded-xl border bg-background px-3 text-base"
+                            >
+                              <option value="all">Во всей операции</option>
+                              <option value="merchant">В продавце</option>
+                              <option value="description">В описании</option>
+                            </select>
+                          </label>
+                          <label
+                            htmlFor="edit-rule-value"
+                            className="block space-y-1.5 text-sm font-medium"
+                          >
+                            <span>Содержит текст</span>
+                            <Input
+                              id="edit-rule-value"
+                              value={editRuleValue}
+                              onChange={(event) =>
+                                setEditRuleValue(event.target.value)
+                              }
+                              maxLength={120}
+                              required
+                              className="h-11 rounded-xl text-base md:text-base"
+                            />
+                          </label>
+                          <label className="block space-y-1.5 text-sm font-medium">
+                            <span>Для операций</span>
+                            <select
+                              value={editRuleDirection}
+                              onChange={(event) => {
+                                setEditRuleDirection(
+                                  event.target.value as CategoryDirection,
+                                );
+                                setEditRuleTarget('');
+                              }}
+                              className="focus-ring min-h-11 w-full rounded-xl border bg-background px-3 text-base"
+                            >
+                              <option value="expense">Расходы</option>
+                              <option value="income">Доходы</option>
+                              <option value="both">Все операции</option>
+                            </select>
+                          </label>
+                          <label className="block space-y-1.5 text-sm font-medium">
+                            <span>Категория</span>
+                            <select
+                              value={selectedEditRuleTarget}
+                              onChange={(event) =>
+                                setEditRuleTarget(event.target.value)
+                              }
+                              className="focus-ring min-h-11 w-full rounded-xl border bg-background px-3 text-base"
+                            >
+                              {editTargetNames.map((target) => (
+                                <option key={target} value={target}>
+                                  {target}
+                                </option>
+                              ))}
+                            </select>
+                          </label>
+                          <div className="flex flex-wrap gap-2">
+                            <Button
+                              type="submit"
+                              disabled={
+                                busy ||
+                                !editRuleValue.trim() ||
+                                !selectedEditRuleTarget
+                              }
+                              className="min-h-11 cursor-pointer"
+                            >
+                              Сохранить
+                            </Button>
+                            <Button
+                              type="button"
+                              variant="ghost"
+                              disabled={busy}
+                              onClick={() => setEditRuleId(null)}
+                              className="min-h-11 cursor-pointer"
+                            >
+                              Отмена
+                            </Button>
+                          </div>
+                        </form>
+                      ) : (
+                        <>
+                          <div className="flex items-start justify-between gap-3">
+                            <div className="min-w-0">
+                              <p className="break-words text-sm font-medium">
+                                {rule.name}
+                              </p>
+                              <p className="mt-1 text-xs text-muted-foreground">
+                                {rule.direction === 'expense'
+                                  ? 'Расходы'
+                                  : rule.direction === 'income'
+                                    ? 'Доходы'
+                                    : 'Все операции'}{' '}
+                                · → {rule.targetCategory}
+                              </p>
+                            </div>
+                            <Badge
+                              variant={rule.isActive ? 'secondary' : 'outline'}
+                            >
+                              {rule.isActive ? 'Включено' : 'Выключено'}
+                            </Badge>
+                          </div>
+                          <div className="mt-3 flex flex-wrap gap-2">
+                            <Button
+                              variant="outline"
+                              className="min-h-11 cursor-pointer"
+                              disabled={busy}
+                              onClick={() => startEditRule(rule)}
+                            >
+                              <Pencil className="size-4" aria-hidden="true" />{' '}
+                              Изменить
+                            </Button>
+                            <Button
+                              variant="outline"
+                              className="min-h-11 cursor-pointer"
+                              disabled={busy}
+                              onClick={() =>
+                                void changeRule(rule.id, !rule.isActive)
+                              }
+                            >
+                              {rule.isActive ? 'Выключить' : 'Включить'}
+                            </Button>
+                            <Button
+                              variant="ghost"
+                              className="min-h-11 cursor-pointer text-destructive"
+                              disabled={busy}
+                              onClick={() => void removeRule(rule.id)}
+                            >
+                              <Trash2 className="size-4" aria-hidden="true" />{' '}
+                              Удалить
+                            </Button>
+                          </div>
+                        </>
+                      )}
                     </li>
                   ))}
                 </ul>

@@ -1,7 +1,10 @@
 'use client';
 
 import { useCallback, useEffect, useState } from 'react';
-import type { CategoryDirection, CategoryRule } from '@/features/categories/types';
+import type {
+  CategoryDirection,
+  CategoryRule,
+} from '@/features/categories/types';
 import { defaultCategories } from '@/features/categories/defaults';
 import {
   createLocalCategory,
@@ -11,6 +14,7 @@ import {
   LOCAL_CATEGORIES_EVENT,
   renameLocalCategory,
   setLocalCategoryRuleActive,
+  updateLocalCategoryRule,
 } from '@/lib/local-categories-store';
 import { createSupabaseBrowserClient } from '@/lib/supabase/browser';
 import {
@@ -20,6 +24,7 @@ import {
   loadCategoryData,
   renameCategory as renameRemoteCategory,
   setCategoryRuleActive as setRemoteRuleActive,
+  updateCategoryRule as updateRemoteRule,
 } from '@/lib/supabase/categories';
 
 export function useCategories() {
@@ -128,6 +133,31 @@ export function useCategories() {
         client
           ? setRemoteRuleActive(client, id, isActive)
           : setLocalCategoryRuleActive(id, isActive),
+      ),
+    updateRule: (
+      id: string,
+      field: CategoryRule['field'],
+      value: string,
+      targetCategory: string,
+      direction: CategoryDirection,
+    ) =>
+      mutate(() =>
+        client
+          ? updateRemoteRule(
+              client,
+              id,
+              field,
+              value,
+              targetCategory,
+              direction,
+            )
+          : updateLocalCategoryRule(
+              id,
+              field,
+              value,
+              targetCategory,
+              direction,
+            ),
       ),
     deleteRule: (id: string) =>
       mutate(() =>

@@ -67,6 +67,7 @@ export default function TransactionsPage() {
   const [noteDraft, setNoteDraft] = useState('');
   const [saving, setSaving] = useState(false);
   const [savingRule, setSavingRule] = useState(false);
+  const [createRuleWithCategory, setCreateRuleWithCategory] = useState(false);
   const [saveMessage, setSaveMessage] = useState('');
   const [saveError, setSaveError] = useState('');
   const [ruleSuggestion, setRuleSuggestion] = useState<{
@@ -136,11 +137,10 @@ export default function TransactionsPage() {
   }
 
   async function changeSelectedCategory(nextCategory: string) {
-    if (!selected) return;
+    if (!selected || saving || savingRule) return;
     if (nextCategory === selected.category) return;
     const merchant = selected.merchant;
     const direction = selected.amount >= 0 ? 'income' : 'expense';
-    const saved = await updateSelected({ category: nextCategory });
     const alreadyCovered = rules.some(
       (rule) =>
         rule.isActive &&
@@ -150,13 +150,45 @@ export default function TransactionsPage() {
           merchant.toLocaleLowerCase('ru') &&
         rule.targetCategory === nextCategory,
     );
+    if (createRuleWithCategory && merchant.trim() && !alreadyCovered) {
+      setSavingRule(true);
+      setSaveError('');
+      const created = await createRule(
+        'merchant',
+        merchant,
+        nextCategory,
+        direction,
+      );
+      if (!created) {
+        setSavingRule(false);
+        setSaveError(
+          'Не удалось создать правило. Категория операции не изменена.',
+        );
+        return;
+      }
+    }
+    const saved = await updateSelected({ category: nextCategory });
     if (saved) {
       setRuleSuggestion(
-        merchant.trim() && !alreadyCovered
+        !createRuleWithCategory && merchant.trim() && !alreadyCovered
           ? { merchant, category: nextCategory, direction }
           : null,
       );
+      if (createRuleWithCategory) {
+        await refresh();
+        setSaveMessage(
+          alreadyCovered
+            ? 'Категория изменена. Подходящее правило уже действует.'
+            : 'Категория изменена, правило создано и применено к похожим операциям.',
+        );
+        setCreateRuleWithCategory(false);
+      }
+    } else if (createRuleWithCategory && !alreadyCovered) {
+      setSaveError(
+        'Правило создано, но категорию операции сохранить не удалось. Повторите изменение категории.',
+      );
     }
+    setSavingRule(false);
   }
 
   async function saveDetails(event: React.SyntheticEvent<HTMLFormElement>) {
@@ -329,6 +361,7 @@ export default function TransactionsPage() {
                     setSaveError('');
                     setSaveMessage('');
                     setRuleSuggestion(null);
+                    setCreateRuleWithCategory(false);
                   }}
                 />
               ))}
@@ -351,11 +384,12 @@ export default function TransactionsPage() {
       <Sheet
         open={Boolean(selected)}
         onOpenChange={(open) => {
-          if (!open && !saving) {
+          if (!open && !saving && !savingRule) {
             setSelected(null);
             setMerchantDraft('');
             setNoteDraft('');
             setRuleSuggestion(null);
+            setCreateRuleWithCategory(false);
           }
         }}
       >
@@ -433,7 +467,7 @@ export default function TransactionsPage() {
                   <select
                     aria-label="Категория"
                     value={selected.category}
-                    disabled={saving}
+                    disabled={saving || savingRule}
                     onChange={(event) =>
                       void changeSelectedCategory(event.target.value)
                     }
@@ -451,6 +485,25 @@ export default function TransactionsPage() {
                     ))}
                   </select>
                 </Detail>
+                {!selected.isTransfer &&
+                  selected.merchant.trim().length > 0 &&
+                  selected.merchant.trim().length <= 120 && (
+                    <label className="flex cursor-pointer items-start gap-2 rounded-xl border border-primary/20 bg-primary/[.04] p-3 text-sm leading-relaxed">
+                      <input
+                        type="checkbox"
+                        checked={createRuleWithCategory}
+                        disabled={saving || savingRule}
+                        onChange={(event) =>
+                          setCreateRuleWithCategory(event.target.checked)
+                        }
+                        className="mt-0.5 size-4 shrink-0 accent-primary"
+                      />
+                      <span>
+                        При смене категории создать правило для «
+                        {selected.merchant}» и применить его к похожим операциям
+                      </span>
+                    </label>
+                  )}
                 {ruleSuggestion && (
                   <div className="rounded-2xl border border-primary/20 bg-primary/[.06] p-4">
                     <p className="text-sm font-medium">

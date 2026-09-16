@@ -6,6 +6,7 @@ import type {
   FinanceCategory,
 } from '../../features/categories/types.ts';
 import {
+  categoryRuleName,
   categoryRuleUpdates,
   normalizeCategoryRuleValue,
 } from '../../features/categories/rules.ts';
@@ -52,7 +53,9 @@ async function loadRuleTransactions(client: SupabaseClient) {
   for (let offset = 0; ; offset += pageSize) {
     const result = await client
       .from('transactions')
-      .select('id,merchant,description,amount,category,is_transfer,bank,account_id,transaction_date,posted_date,currency,transaction_type,note,source_file')
+      .select(
+        'id,merchant,description,amount,category,is_transfer,bank,account_id,transaction_date,posted_date,currency,transaction_type,note,source_file',
+      )
       .order('id', { ascending: true })
       .range(offset, offset + pageSize - 1);
     if (result.error) throw result.error;
@@ -141,7 +144,9 @@ export async function loadCategoryData(
   const rules = ((rulesResult.data ?? []) as RuleRow[])
     .filter(
       (row) =>
-        (row.field === 'all' || row.field === 'merchant' || row.field === 'description') &&
+        (row.field === 'all' ||
+          row.field === 'merchant' ||
+          row.field === 'description') &&
         row.operator === 'contains' &&
         typeof row.value === 'string',
     )
@@ -233,7 +238,7 @@ export async function createCategoryRule(
   }
   const { error } = await client.from('category_rules').insert({
     user_id: userId,
-    name: `${field === 'all' ? 'Операция' : field === 'merchant' ? 'Продавец' : 'Описание'} содержит «${needle}»`,
+    name: categoryRuleName(field, needle),
     priority: 100,
     field,
     operator: 'contains',
@@ -244,6 +249,55 @@ export async function createCategoryRule(
   });
   if (error) throw error;
   return applyStoredCategoryRules(client);
+}
+
+export async function updateCategoryRule(
+  client: SupabaseClient,
+  id: string,
+  field: CategoryRule['field'],
+  value: string,
+  targetCategory: string,
+  direction: CategoryDirection,
+) {
+  const needle = normalizeCategoryRuleValue(value);
+  if (!needle || needle.length > 120) {
+    throw new Error('Укажите текст правила длиной до 120 символов.');
+  }
+  const { categories, rules } = await loadCategoryData(client);
+  const original = rules.find((rule) => rule.id === id);
+  if (!original) throw new Error('Правило не найдено.');
+  if (
+    !categories.some(
+      (category) =>
+        category.name === targetCategory &&
+        (category.direction === direction || category.direction === 'both'),
+    )
+  ) {
+    throw new Error('Выберите категорию для этого типа операций.');
+  }
+  if (
+    rules.some(
+      (rule) =>
+        rule.id !== id &&
+        rule.field === field &&
+        rule.direction === direction &&
+        rule.value.toLocaleLowerCase('ru') === needle.toLocaleLowerCase('ru'),
+    )
+  ) {
+    throw new Error('Такое правило уже существует.');
+  }
+  const { error } = await client
+    .from('category_rules')
+    .update({
+      name: categoryRuleName(field, needle),
+      field,
+      value: needle,
+      target_category: targetCategory,
+      direction,
+    })
+    .eq('id', id);
+  if (error) throw error;
+  if (original.isActive) return applyStoredCategoryRules(client);
 }
 
 export async function setCategoryRuleActive(

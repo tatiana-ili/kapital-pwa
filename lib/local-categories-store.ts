@@ -1,5 +1,8 @@
 import { defaultCategories } from '../features/categories/defaults.ts';
-import { normalizeCategoryRuleValue } from '../features/categories/rules.ts';
+import {
+  categoryRuleName,
+  normalizeCategoryRuleValue,
+} from '../features/categories/rules.ts';
 import type {
   CategoryData,
   CategoryDirection,
@@ -149,7 +152,7 @@ export function createLocalCategoryRule(
   }
   const rule: CategoryRule = {
     id: globalThis.crypto.randomUUID(),
-    name: `${field === 'all' ? 'Операция' : field === 'merchant' ? 'Продавец' : 'Описание'} содержит «${needle}»`,
+    name: categoryRuleName(field, needle),
     priority: 100,
     field,
     operator: 'contains',
@@ -164,6 +167,57 @@ export function createLocalCategoryRule(
     [...defaultCategories, ...stored.categories],
     stored.rules,
   );
+  return rule;
+}
+
+export function updateLocalCategoryRule(
+  id: string,
+  field: CategoryRule['field'],
+  value: string,
+  targetCategory: string,
+  direction: CategoryDirection,
+) {
+  const needle = normalizeCategoryRuleValue(value);
+  if (!needle || needle.length > 120) {
+    throw new Error('Укажите текст правила длиной до 120 символов.');
+  }
+  const stored = readStored();
+  const rule = stored.rules.find((item) => item.id === id);
+  if (!rule) throw new Error('Правило не найдено.');
+  if (
+    ![...defaultCategories, ...stored.categories].some(
+      (category) =>
+        category.name === targetCategory &&
+        (category.direction === direction || category.direction === 'both'),
+    )
+  ) {
+    throw new Error('Выберите категорию для этого типа операций.');
+  }
+  if (
+    stored.rules.some(
+      (item) =>
+        item.id !== id &&
+        item.field === field &&
+        item.direction === direction &&
+        item.value.toLocaleLowerCase('ru') === needle.toLocaleLowerCase('ru'),
+    )
+  ) {
+    throw new Error('Такое правило уже существует.');
+  }
+  Object.assign(rule, {
+    name: categoryRuleName(field, needle),
+    field,
+    value: needle,
+    targetCategory,
+    direction,
+  });
+  writeStored(stored);
+  if (rule.isActive) {
+    applyLocalCategoryRules(
+      [...defaultCategories, ...stored.categories],
+      stored.rules,
+    );
+  }
   return rule;
 }
 
