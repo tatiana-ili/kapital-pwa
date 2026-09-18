@@ -42,6 +42,7 @@ export default function CategoriesPage() {
     renameCategory,
     createRule,
     updateRule,
+    auditRules,
     setRuleActive,
     deleteRule,
   } = useCategories();
@@ -56,6 +57,9 @@ export default function CategoriesPage() {
   const [name, setName] = useState('');
   const [direction, setDirection] = useState<CategoryDirection>('expense');
   const [renameId, setRenameId] = useState<string | null>(null);
+  const [renameDirection, setRenameDirection] = useState<'expense' | 'income'>(
+    'expense',
+  );
   const [renameName, setRenameName] = useState('');
   const [ruleValue, setRuleValue] = useState('');
   const [ruleDirection, setRuleDirection] = useState<'expense' | 'income'>(
@@ -111,10 +115,9 @@ export default function CategoriesPage() {
   const categoryCounts = useMemo(() => {
     const counts = new Map<string, number>();
     for (const transaction of transactions) {
-      counts.set(
-        transaction.category,
-        (counts.get(transaction.category) ?? 0) + 1,
-      );
+      const direction = transaction.amount >= 0 ? 'income' : 'expense';
+      const key = `${direction}:${transaction.category}`;
+      counts.set(key, (counts.get(key) ?? 0) + 1);
     }
     return counts;
   }, [transactions]);
@@ -126,12 +129,22 @@ export default function CategoriesPage() {
   async function addCategory(event: SyntheticEvent<HTMLFormElement>) {
     event.preventDefault();
     if (!name.trim() || busy) return;
+    const existing = categories.find(
+      (category) =>
+        !category.isSystem &&
+        category.name.toLocaleLowerCase('ru') ===
+          name.trim().replace(/\s+/g, ' ').toLocaleLowerCase('ru'),
+    );
     setBusy(true);
     setMessage('');
     const saved = await createCategory(name, direction);
     if (saved) {
       setName('');
-      setMessage('Категория создана.');
+      setMessage(
+        existing && existing.direction !== direction
+          ? 'Категория теперь доступна для расходов и доходов.'
+          : 'Категория создана.',
+      );
     }
     setBusy(false);
   }
@@ -227,8 +240,26 @@ export default function CategoriesPage() {
     setBusy(false);
   }
 
-  function startRename(category: FinanceCategory) {
+  async function reviewAllRules() {
+    if (busy) return;
+    setBusy(true);
+    setMessage('');
+    const report = await auditRules();
+    if (report) {
+      await refreshTransactions({ silent: true });
+      setMessage(
+        `Проверено операций: ${report.checkedTransactions}. Удалено дублей: ${report.duplicatesRemoved}. Объединено правил: ${report.mergedRules}. Обновлено категорий: ${report.recategorized}.`,
+      );
+    }
+    setBusy(false);
+  }
+
+  function startRename(
+    category: FinanceCategory,
+    listDirection: 'expense' | 'income',
+  ) {
     setRenameId(category.id);
+    setRenameDirection(listDirection);
     setRenameName(category.name);
     setMessage('');
   }
@@ -439,6 +470,10 @@ export default function CategoriesPage() {
                     <option value="income">Доходы</option>
                     <option value="both">Расходы и доходы</option>
                   </select>
+                  <span className="block text-xs font-normal leading-relaxed text-muted-foreground">
+                    «Расходы и доходы» — одна категория для списаний и
+                    поступлений.
+                  </span>
                 </label>
               </div>
               <Button
@@ -453,11 +488,13 @@ export default function CategoriesPage() {
 
             <CategoryList
               title="Расходы"
+              direction="expense"
               items={expenseCategories}
               renameId={renameId}
+              renameDirection={renameDirection}
               renameName={renameName}
               busy={busy}
-              onStartRename={startRename}
+              onStartRename={(category) => startRename(category, 'expense')}
               onRenameName={setRenameName}
               onSaveRename={saveRename}
               onCancelRename={() => setRenameId(null)}
@@ -469,11 +506,13 @@ export default function CategoriesPage() {
             />
             <CategoryList
               title="Доходы"
+              direction="income"
               items={incomeCategories}
               renameId={renameId}
+              renameDirection={renameDirection}
               renameName={renameName}
               busy={busy}
-              onStartRename={startRename}
+              onStartRename={(category) => startRename(category, 'income')}
               onRenameName={setRenameName}
               onSaveRename={saveRename}
               onCancelRename={() => setRenameId(null)}
@@ -562,7 +601,20 @@ export default function CategoriesPage() {
             </form>
 
             <div className="surface-card rounded-3xl border p-5 sm:p-6">
-              <h3 className="text-lg font-semibold">Мои правила</h3>
+              <div className="flex flex-wrap items-center justify-between gap-3">
+                <h3 className="text-lg font-semibold">Мои правила</h3>
+                {rules.length > 0 && (
+                  <Button
+                    type="button"
+                    variant="outline"
+                    className="min-h-11 cursor-pointer"
+                    disabled={busy}
+                    onClick={() => void reviewAllRules()}
+                  >
+                    Проверить и применить все
+                  </Button>
+                )}
+              </div>
               {rules.length ? (
                 <ul className="mt-4 divide-y divide-border">
                   {rules.map((rule) => (
@@ -735,6 +787,7 @@ export default function CategoriesPage() {
         <CategoryReviewSheet
           target={reviewTarget}
           categories={categories}
+          rules={rules}
           transactions={transactions}
           loading={transactionsLoading}
           savingId={reviewSavingId}
@@ -751,8 +804,10 @@ export default function CategoriesPage() {
 
 function CategoryList({
   title,
+  direction,
   items,
   renameId,
+  renameDirection,
   renameName,
   busy,
   onStartRename,
@@ -764,8 +819,10 @@ function CategoryList({
   onReview,
 }: {
   title: string;
+  direction: 'expense' | 'income';
   items: FinanceCategory[];
   renameId: string | null;
+  renameDirection: 'expense' | 'income';
   renameName: string;
   busy: boolean;
   onStartRename: (category: FinanceCategory) => void;
@@ -782,7 +839,7 @@ function CategoryList({
       <ul className="mt-3 divide-y divide-border">
         {items.map((category) => (
           <li key={category.id} className="py-2 first:pt-0 last:pb-0">
-            {renameId === category.id ? (
+            {renameId === category.id && renameDirection === direction ? (
               <form
                 onSubmit={onSaveRename}
                 className="flex flex-wrap items-center gap-2"
@@ -820,11 +877,17 @@ function CategoryList({
                   <span className="block break-words text-sm font-medium">
                     {category.name}
                   </span>
+                  {category.direction === 'both' && (
+                    <span className="block text-xs text-muted-foreground">
+                      Для расходов и доходов
+                    </span>
+                  )}
                   <span className="mt-0.5 block text-xs text-muted-foreground">
                     {transactionsLoading
                       ? 'Считаем операции…'
                       : formatTransactionCount(
-                          categoryCounts.get(category.name) ?? 0,
+                          categoryCounts.get(`${direction}:${category.name}`) ??
+                            0,
                         )}
                   </span>
                 </span>

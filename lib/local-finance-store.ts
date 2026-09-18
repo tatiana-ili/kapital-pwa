@@ -99,6 +99,10 @@ export function loadLocalFinanceData(): LocalFinanceState {
   }
 }
 
+export function loadLocalVisibleTransactions() {
+  return allVisibleTransactions(loadLocalFinanceData());
+}
+
 export function loadLocalImportProfile(
   bank: BankCode,
   fileFormat: StatementFileFormat,

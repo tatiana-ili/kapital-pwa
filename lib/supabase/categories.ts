@@ -6,8 +6,14 @@ import type {
   FinanceCategory,
 } from '../../features/categories/types.ts';
 import {
+  planCategoryRuleAudit,
+  type CategoryRuleAuditReport,
+} from '../../features/categories/audit.ts';
+import {
+  applyCategoryRules,
   categoryRuleName,
   categoryRuleUpdates,
+  nextCategoryRulePriority,
   normalizeCategoryRuleValue,
 } from '../../features/categories/rules.ts';
 
@@ -66,28 +72,32 @@ async function loadRuleTransactions(client: SupabaseClient) {
   return rows;
 }
 
+function normalizeRuleTransactions(rows: RuleTransactionRow[]) {
+  return rows.map((transaction) => ({
+    id: transaction.id,
+    merchant: transaction.merchant,
+    description: transaction.description,
+    amount: Number(transaction.amount),
+    category: transaction.category,
+    isTransfer: transaction.is_transfer,
+    bank: transaction.bank,
+    accountId: transaction.account_id,
+    date: transaction.transaction_date,
+    postedDate: transaction.posted_date,
+    currency: transaction.currency,
+    transactionType: transaction.transaction_type,
+    note: transaction.note,
+    sourceFile: transaction.source_file,
+  }));
+}
+
 async function applyStoredCategoryRules(client: SupabaseClient) {
   const [{ categories, rules }, transactions] = await Promise.all([
     loadCategoryData(client),
     loadRuleTransactions(client),
   ]);
   const updates = categoryRuleUpdates(
-    transactions.map((transaction) => ({
-      id: transaction.id,
-      merchant: transaction.merchant,
-      description: transaction.description,
-      amount: Number(transaction.amount),
-      category: transaction.category,
-      isTransfer: transaction.is_transfer,
-      bank: transaction.bank,
-      accountId: transaction.account_id,
-      date: transaction.transaction_date,
-      postedDate: transaction.posted_date,
-      currency: transaction.currency,
-      transactionType: transaction.transaction_type,
-      note: transaction.note,
-      sourceFile: transaction.source_file,
-    })),
+    normalizeRuleTransactions(transactions),
     categories,
     rules,
   );
@@ -169,13 +179,53 @@ export async function createCategory(
   name: string,
   direction: CategoryDirection,
 ) {
+  const nextName = name.replace(/\s+/g, ' ').trim();
+  if (!nextName || nextName.length > 80) {
+    throw new Error('Название категории должно содержать от 1 до 80 символов.');
+  }
+  const { categories } = await loadCategoryData(client);
+  const matches = categories.filter(
+    (category) =>
+      category.name.toLocaleLowerCase('ru') ===
+      nextName.toLocaleLowerCase('ru'),
+  );
+  if (
+    matches.some(
+      (category) =>
+        category.direction === direction || category.direction === 'both',
+    )
+  ) {
+    throw new Error(
+      'Такая категория уже доступна для выбранного типа операций.',
+    );
+  }
+  if (matches.length) {
+    const owned = matches.find((category) => !category.isSystem);
+    if (!owned) {
+      throw new Error(
+        'Название занято стандартной категорией. Выберите другое название.',
+      );
+    }
+    const { error } = await client
+      .from('categories')
+      .update({ direction: 'both' })
+      .eq('id', owned.id);
+    if (error) throw error;
+    return;
+  }
   const userId = await currentUserId(client);
   const { error } = await client.from('categories').insert({
     user_id: userId,
-    name: name.trim(),
+    name: nextName,
     direction,
     is_system: false,
   });
+  if (
+    error?.code === '23505' ||
+    /category with this name already exists/i.test(error?.message ?? '')
+  ) {
+    throw new Error('Такая категория уже существует.');
+  }
   if (error) throw error;
 }
 
@@ -203,35 +253,31 @@ export async function createCategoryRule(
   if (!needle || needle.length > 120) {
     throw new Error('Укажите текст правила длиной до 120 символов.');
   }
-  const { data: targetRows, error: targetError } = await client
-    .from('categories')
-    .select('direction')
-    .eq('name', targetCategory);
-  if (targetError) throw targetError;
+  const { categories, rules } = await loadCategoryData(client);
   if (
-    !(targetRows ?? []).some(
+    !categories.some(
       (category) =>
-        category.direction === direction || category.direction === 'both',
+        category.name === targetCategory &&
+        (category.direction === direction || category.direction === 'both'),
     )
   ) {
     throw new Error('Выберите категорию для этого типа операций.');
   }
-  const { data: existingRules, error: lookupError } = await client
-    .from('category_rules')
-    .select('id,value')
-    .eq('field', field)
-    .eq('operator', 'contains')
-    .eq('direction', direction);
-  if (lookupError) throw lookupError;
-  const existing = (existingRules ?? []).find(
+  const priority = nextCategoryRulePriority(rules);
+  const existing = rules.find(
     (rule) =>
-      typeof rule.value === 'string' &&
+      rule.field === field &&
+      rule.direction === direction &&
       rule.value.toLocaleLowerCase('ru') === needle.toLocaleLowerCase('ru'),
   );
   if (existing) {
     const { error } = await client
       .from('category_rules')
-      .update({ target_category: targetCategory, is_active: true })
+      .update({
+        target_category: targetCategory,
+        is_active: true,
+        priority,
+      })
       .eq('id', existing.id);
     if (error) throw error;
     return applyStoredCategoryRules(client);
@@ -239,7 +285,7 @@ export async function createCategoryRule(
   const { error } = await client.from('category_rules').insert({
     user_id: userId,
     name: categoryRuleName(field, needle),
-    priority: 100,
+    priority,
     field,
     operator: 'contains',
     value: needle,
@@ -290,6 +336,7 @@ export async function updateCategoryRule(
     .from('category_rules')
     .update({
       name: categoryRuleName(field, needle),
+      priority: nextCategoryRulePriority(rules),
       field,
       value: needle,
       target_category: targetCategory,
@@ -316,4 +363,82 @@ export async function setCategoryRuleActive(
 export async function deleteCategoryRule(client: SupabaseClient, id: string) {
   const { error } = await client.from('category_rules').delete().eq('id', id);
   if (error) throw error;
+}
+
+export async function auditStoredCategoryRules(
+  client: SupabaseClient,
+): Promise<CategoryRuleAuditReport> {
+  const [{ categories, rules }, rows] = await Promise.all([
+    loadCategoryData(client),
+    loadRuleTransactions(client),
+  ]);
+  const transactions = normalizeRuleTransactions(rows);
+  const plan = planCategoryRuleAudit(rules);
+  if (
+    transactions.some(
+      (transaction) =>
+        applyCategoryRules(
+          transaction,
+          transaction.category,
+          categories,
+          rules,
+        ) !==
+        applyCategoryRules(
+          transaction,
+          transaction.category,
+          categories,
+          plan.rules,
+        ),
+    )
+  ) {
+    throw new Error(
+      'Объединение меняет результат категоризации. Правила не изменены.',
+    );
+  }
+
+  for (const update of plan.updates) {
+    const { error } = await client
+      .from('category_rules')
+      .update({ name: update.name, value: update.value })
+      .eq('id', update.id);
+    if (error) throw error;
+  }
+  for (let offset = 0; offset < plan.deleteIds.length; offset += 100) {
+    const { error } = await client
+      .from('category_rules')
+      .delete()
+      .in('id', plan.deleteIds.slice(offset, offset + 100));
+    if (error) throw error;
+  }
+
+  const recategorized = await applyStoredCategoryRules(client);
+  const [{ categories: currentCategories, rules: currentRules }, currentRows] =
+    await Promise.all([loadCategoryData(client), loadRuleTransactions(client)]);
+  const currentById = new Map(currentRules.map((rule) => [rule.id, rule]));
+  if (
+    plan.deleteIds.some((id) => currentById.has(id)) ||
+    plan.updates.some(
+      (update) => currentById.get(update.id)?.value !== update.value,
+    )
+  ) {
+    throw new Error('Не все дубли правил удалены. Повторите проверку.');
+  }
+  if (
+    categoryRuleUpdates(
+      normalizeRuleTransactions(currentRows),
+      currentCategories,
+      currentRules,
+    ).length
+  ) {
+    throw new Error(
+      'Не все операции получили категорию по правилам. Повторите проверку.',
+    );
+  }
+  return {
+    checkedTransactions: currentRows.length,
+    recategorized,
+    duplicatesRemoved: plan.duplicatesRemoved,
+    mergedRules: plan.mergedRules,
+    mergedGroups: plan.mergedGroups,
+  };
 }

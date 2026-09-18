@@ -48,6 +48,20 @@ export function categoryRuleName(field: CategoryRule['field'], value: string) {
   return `${subject} содержит «${value}»`;
 }
 
+export function nextCategoryRulePriority(rules: CategoryRule[]) {
+  return (
+    rules.reduce((minimum, rule) => Math.min(minimum, rule.priority), 101) - 1
+  );
+}
+
+export function compareCategoryRules(left: CategoryRule, right: CategoryRule) {
+  return (
+    left.priority - right.priority ||
+    Number(left.direction === 'both') - Number(right.direction === 'both') ||
+    left.id.localeCompare(right.id)
+  );
+}
+
 function searchableText(input: RuleInput, field: CategoryRule['field']) {
   if (field === 'merchant' || field === 'description') {
     return [input[field]];
@@ -68,7 +82,6 @@ function searchableText(input: RuleInput, field: CategoryRule['field']) {
     input.transactionType,
     input.note,
     input.sourceFile,
-    input.category,
     String(input.amount),
     String(Math.abs(input.amount)),
   ];
@@ -81,15 +94,22 @@ export function applyCategoryRules(
   rules: CategoryRule[],
 ) {
   if (input.isTransfer) return 'Переводы';
+  return (
+    findMatchingCategoryRule(input, categories, rules)?.targetCategory ??
+    fallback
+  );
+}
+
+export function findMatchingCategoryRule(
+  input: RuleInput,
+  categories: FinanceCategory[],
+  rules: CategoryRule[],
+): CategoryRule | undefined {
+  if (input.isTransfer) return undefined;
   const available = new Set(
     categoriesForAmount(categories, input.amount).map((item) => item.name),
   );
-  const sorted = [...rules].sort(
-    (left, right) =>
-      left.priority - right.priority ||
-      Number(left.direction === 'both') - Number(right.direction === 'both') ||
-      left.id.localeCompare(right.id),
-  );
+  const sorted = [...rules].sort(compareCategoryRules);
   for (const rule of sorted) {
     if (
       !rule.isActive ||
@@ -113,10 +133,10 @@ export function applyCategoryRules(
         values.some((value) => value.includes(keyword)),
       )
     ) {
-      return rule.targetCategory;
+      return rule;
     }
   }
-  return fallback;
+  return undefined;
 }
 
 export function categoryRuleUpdates(

@@ -10,12 +10,16 @@ import {
   Search,
 } from 'lucide-react';
 import { categoriesForAmount } from '@/features/categories/defaults';
+import { findMatchingCategoryRule } from '@/features/categories/rules';
 import {
   transactionCanBeAddedToTarget,
   transactionMatchesReviewTarget,
   type CategoryReviewTarget,
 } from '@/features/categories/review';
-import type { FinanceCategory } from '@/features/categories/types';
+import type {
+  CategoryRule,
+  FinanceCategory,
+} from '@/features/categories/types';
 import {
   formatRubles,
   formatTransactionDate,
@@ -40,6 +44,7 @@ type ReviewMode = 'included' | 'available';
 type CategoryReviewSheetProps = {
   target: CategoryReviewTarget;
   categories: FinanceCategory[];
+  rules: CategoryRule[];
   transactions: FinanceTransaction[];
   loading: boolean;
   savingId: string | null;
@@ -66,6 +71,7 @@ function targetTitle(target: CategoryReviewTarget) {
 export function CategoryReviewSheet({
   target,
   categories,
+  rules,
   transactions,
   loading,
   savingId,
@@ -262,6 +268,7 @@ export function CategoryReviewSheet({
                     transaction={transaction}
                     target={target}
                     categories={categories}
+                    rules={rules}
                     included={mode === 'included'}
                     saving={savingId === transaction.id}
                     disabled={Boolean(savingId)}
@@ -347,6 +354,7 @@ function ReviewTransaction({
   transaction,
   target,
   categories,
+  rules,
   included,
   saving,
   disabled,
@@ -356,6 +364,7 @@ function ReviewTransaction({
   transaction: FinanceTransaction;
   target: CategoryReviewTarget;
   categories: FinanceCategory[];
+  rules: CategoryRule[];
   included: boolean;
   saving: boolean;
   disabled: boolean;
@@ -371,6 +380,7 @@ function ReviewTransaction({
 }) {
   const [expanded, setExpanded] = useState(false);
   const [createRule, setCreateRule] = useState(false);
+  const matchingRule = findMatchingCategoryRule(transaction, categories, rules);
   const categoryNames = [
     ...new Set([
       transaction.category,
@@ -421,6 +431,13 @@ function ReviewTransaction({
           aria-hidden="true"
         />
       </button>
+
+      {matchingRule && (
+        <p className="mt-2 rounded-xl bg-primary/10 px-3 py-2 text-sm leading-relaxed text-foreground">
+          <span className="font-medium">Подходит правило:</span>{' '}
+          {matchingRule.name} → {matchingRule.targetCategory}
+        </p>
+      )}
 
       {expanded && (
         <div
@@ -522,6 +539,7 @@ function ReviewTransaction({
       </div>
       {target.kind === 'category' &&
         !transaction.isTransfer &&
+        !matchingRule &&
         transaction.merchant.trim().length > 0 &&
         transaction.merchant.trim().length <= 120 && (
           <label className="mt-2 flex cursor-pointer items-start gap-2 text-xs leading-relaxed text-muted-foreground">

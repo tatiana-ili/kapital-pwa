@@ -7,6 +7,7 @@ import type {
 } from '@/features/categories/types';
 import { defaultCategories } from '@/features/categories/defaults';
 import {
+  auditLocalCategoryRules,
   createLocalCategory,
   createLocalCategoryRule,
   deleteLocalCategoryRule,
@@ -18,6 +19,7 @@ import {
 } from '@/lib/local-categories-store';
 import { createSupabaseBrowserClient } from '@/lib/supabase/browser';
 import {
+  auditStoredCategoryRules,
   createCategory as createRemoteCategory,
   createCategoryRule as createRemoteRule,
   deleteCategoryRule as deleteRemoteRule,
@@ -99,12 +101,31 @@ export function useCategories() {
     }
   }
 
+  async function auditRules() {
+    setError('');
+    try {
+      const report = client
+        ? await auditStoredCategoryRules(client)
+        : auditLocalCategoryRules();
+      await refresh();
+      return report;
+    } catch (cause) {
+      setError(
+        cause instanceof Error
+          ? cause.message
+          : 'Не удалось проверить правила.',
+      );
+      return null;
+    }
+  }
+
   return {
     categories: data.categories,
     rules: data.rules,
     loading,
     error,
     refresh,
+    auditRules,
     createCategory: (name: string, direction: CategoryDirection) =>
       mutate(() =>
         client

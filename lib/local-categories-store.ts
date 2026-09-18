@@ -1,6 +1,13 @@
 import { defaultCategories } from '../features/categories/defaults.ts';
 import {
+  planCategoryRuleAudit,
+  type CategoryRuleAuditReport,
+} from '../features/categories/audit.ts';
+import {
+  applyCategoryRules,
   categoryRuleName,
+  categoryRuleUpdates,
+  nextCategoryRulePriority,
   normalizeCategoryRuleValue,
 } from '../features/categories/rules.ts';
 import type {
@@ -11,6 +18,7 @@ import type {
 } from '../features/categories/types.ts';
 import {
   applyLocalCategoryRules,
+  loadLocalVisibleTransactions,
   renameLocalTransactionCategory,
 } from './local-finance-store.ts';
 import { renameLocalBudgetCategory } from './local-planning-store.ts';
@@ -83,7 +91,34 @@ export function createLocalCategory(
 ) {
   const nextName = normalizedName(name);
   const stored = readStored();
-  ensureUnique(nextName, [...defaultCategories, ...stored.categories]);
+  const matches = [...defaultCategories, ...stored.categories].filter(
+    (category) =>
+      category.name.toLocaleLowerCase('ru') ===
+      nextName.toLocaleLowerCase('ru'),
+  );
+  if (
+    matches.some(
+      (category) =>
+        category.direction === direction || category.direction === 'both',
+    )
+  ) {
+    throw new Error(
+      'Такая категория уже доступна для выбранного типа операций.',
+    );
+  }
+  if (matches.length) {
+    const owned = matches.find((category) => !category.isSystem);
+    if (!owned) {
+      throw new Error(
+        'Название занято стандартной категорией. Выберите другое название.',
+      );
+    }
+    const category = stored.categories.find((item) => item.id === owned.id);
+    if (!category) throw new Error('Категория не найдена.');
+    category.direction = 'both';
+    writeStored(stored);
+    return category;
+  }
   const category: FinanceCategory = {
     id: globalThis.crypto.randomUUID(),
     name: nextName,
@@ -133,6 +168,7 @@ export function createLocalCategoryRule(
   ) {
     throw new Error('Выберите существующую категорию.');
   }
+  const priority = nextCategoryRulePriority(stored.rules);
   const existing = stored.rules.find(
     (rule) =>
       rule.field === field &&
@@ -143,6 +179,7 @@ export function createLocalCategoryRule(
   if (existing) {
     existing.targetCategory = targetCategory;
     existing.isActive = true;
+    existing.priority = priority;
     writeStored(stored);
     applyLocalCategoryRules(
       [...defaultCategories, ...stored.categories],
@@ -153,7 +190,7 @@ export function createLocalCategoryRule(
   const rule: CategoryRule = {
     id: globalThis.crypto.randomUUID(),
     name: categoryRuleName(field, needle),
-    priority: 100,
+    priority,
     field,
     operator: 'contains',
     value: needle,
@@ -206,6 +243,7 @@ export function updateLocalCategoryRule(
   }
   Object.assign(rule, {
     name: categoryRuleName(field, needle),
+    priority: nextCategoryRulePriority(stored.rules),
     field,
     value: needle,
     targetCategory,
@@ -239,4 +277,51 @@ export function deleteLocalCategoryRule(id: string) {
   const stored = readStored();
   stored.rules = stored.rules.filter((rule) => rule.id !== id);
   writeStored(stored);
+}
+
+export function auditLocalCategoryRules(): CategoryRuleAuditReport {
+  const stored = readStored();
+  const categories = [...defaultCategories, ...stored.categories];
+  const transactions = loadLocalVisibleTransactions();
+  const plan = planCategoryRuleAudit(stored.rules);
+  if (
+    transactions.some(
+      (transaction) =>
+        applyCategoryRules(
+          transaction,
+          transaction.category,
+          categories,
+          stored.rules,
+        ) !==
+        applyCategoryRules(
+          transaction,
+          transaction.category,
+          categories,
+          plan.rules,
+        ),
+    )
+  ) {
+    throw new Error(
+      'Объединение меняет результат категоризации. Правила не изменены.',
+    );
+  }
+  if (plan.deleteIds.length || plan.updates.length) {
+    writeStored({ ...stored, rules: plan.rules });
+  }
+  const recategorized = applyLocalCategoryRules(categories, plan.rules);
+  if (
+    categoryRuleUpdates(loadLocalVisibleTransactions(), categories, plan.rules)
+      .length
+  ) {
+    throw new Error(
+      'Не все операции получили категорию по правилам. Повторите проверку.',
+    );
+  }
+  return {
+    checkedTransactions: transactions.length,
+    recategorized,
+    duplicatesRemoved: plan.duplicatesRemoved,
+    mergedRules: plan.mergedRules,
+    mergedGroups: plan.mergedGroups,
+  };
 }
